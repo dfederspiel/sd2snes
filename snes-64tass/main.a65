@@ -54,19 +54,45 @@ GAME_MAIN
 
   jsr poc_display
 
+  ; --- Disable per-frame tile DMA ---
+  ; poc_display's NMI wait may catch a stale isr_done from an NMI
+  ; that fired mid-hiprint (before all text was in WRAM buffers).
+  ; Wait for one guaranteed fresh NMI so the complete text is in VRAM.
+  stz isr_done
+- lda isr_done
+  lsr
+  bcc -
+  stz isr_done
+  ; Now safe to stop: tile DMAs ($1000×2 = ~65K cycles) exceed VBlank
+  ; (~50K cycles), corrupting the first ~11 scanlines. Text is static.
+  lda #1
+  sta screen_dma_disable
+
   ; --- Initialize animation state ---
-  ; Start at pink (palette 0), transitioning to purple (palette 1)
-  stz anim_frame
-  lda #2               ; update every 3rd frame (~20fps animation)
-  sta anim_speed
+  ; Start showing palette 0 (warm red), idle (not transitioning)
+  stz anim_frame         ; 0 = idle
+  stz anim_speed         ; animate every frame (fast transitions)
   stz anim_timer
   stz anim_phase
-  ; src = palette 0 (offset 0), dst = palette 1 (offset 60)
+  ; src = palette 0, dst = palette 0 (idle: src == dst)
   stz anim_src_idx
   stz anim_src_idx+1
-  lda #PALETTE_SIZE
-  sta anim_dst_idx
+  stz anim_dst_idx
   stz anim_dst_idx+1
+
+  ; --- Initialize ball sprite ---
+  sep #$20             ; ensure 8-bit accumulator
+  .as
+  lda #100             ; starting X position
+  sta ball_x
+  lda #100             ; starting Y position
+  sta ball_y
+  lda #2               ; X velocity (+2 pixels/frame)
+  sta ball_vx
+  lda #1               ; Y velocity (+1 pixel/frame)
+  sta ball_vy
+  stz bounce_wall        ; no bounce yet
+  ; Ball color (white) is set in setup_gfx during forced blank.
 
   ; --- Switch data bank to $7E for WRAM variable access ---
   lda #$7e
@@ -80,14 +106,15 @@ mainloop
   lsr
   bcc -
   stz isr_done
+  jsr update_ball
   jsr animate_gradient
   bra mainloop
 
 
 ; =============================================
-; animate_gradient - Per-frame gradient color cycling
-; Interpolates between src and dst gradient palettes
-; using SNES hardware multiply. Updates hdma_pal WRAM.
+; animate_gradient - Bounce-triggered gradient transitions
+; Only starts a new transition when bounce_wall != 0 and idle.
+; Interpolates between src and dst palettes over 128 frames.
 ; Runs in .databank $7e, sep #$20, rep #$10
 ; =============================================
 animate_gradient
@@ -109,13 +136,47 @@ _anim_tick
   jmp _anim_rts          ; timer != 0 → skip this frame
 +
 
-  ; --- Switch to DBR=$00 for hardware multiply register access ---
+  ; --- Check state: currently transitioning? ---
+  lda anim_frame
+  bne _anim_do_interp    ; anim_frame != 0 → continue transition
+
+  ; --- Idle: check for bounce trigger ---
+  lda bounce_wall
+  bne +                  ; bounce → start new transition
+  jmp _anim_rts          ; no bounce → stay idle
++
+
+  ; --- Start new transition ---
+  ; Switch DBR=$00 for ROM data access
   phb
   lda #$00
   pha
   plb
   .databank 0
 
+  lda bounce_wall
+  dec a                  ; wall 1-4 → palette index 0-3
+  tax
+  lda gradient_phase_offsets,x
+  cmp anim_src_idx       ; already showing this palette?
+  bne +                  ; different → start transition
+  jmp _anim_restore_dbr  ; same → skip (no visible change)
++
+  sta anim_dst_idx
+  stz anim_dst_idx+1
+  lda #1
+  sta anim_frame         ; begin transition at frame 1
+  bra _anim_setup_ptrs
+
+_anim_do_interp
+  ; --- Switch DBR=$00 for hardware multiply + ROM access ---
+  phb
+  lda #$00
+  pha
+  plb
+  .databank 0
+
+_anim_setup_ptrs
   ; --- Set up src/dst palette pointers (24-bit into ROM) ---
   rep #$20
   .al
@@ -133,21 +194,17 @@ _anim_tick
   sta anim_src_ptr+2
   sta anim_dst_ptr+2
 
-  ; --- Interpolate 20 gradient steps ---
-  ; Y = step index (0..19), also used as palette array offset
+  ; --- Interpolate 10 gradient steps ---
   ldy #0
 
 _anim_step_loop
   phy                    ; save step index
 
   ; --- Interpolate R channel (offset Y + 0) ---
-  ; NOTE: anim_temp+0 is reserved for _interp_channel's src storage.
-  ; R/G results go in +1/+2, packing uses +3.
-  jsr _interp_channel
+  jsr interp_channel
   sta anim_temp+1        ; save interpolated R
 
-  ; --- Interpolate G channel (offset Y + 20) ---
-  ; Must use 16-bit A for tya/tay — 8-bit tay corrupts Y high byte
+  ; --- Interpolate G channel (offset Y + NUM_GRADIENT_STEPS) ---
   rep #$20
   .al
   tya
@@ -156,10 +213,10 @@ _anim_step_loop
   tay
   sep #$20
   .as
-  jsr _interp_channel
+  jsr interp_channel
   sta anim_temp+2        ; save interpolated G
 
-  ; --- Interpolate B channel (offset Y + 40) ---
+  ; --- Interpolate B channel (offset Y + 2*NUM_GRADIENT_STEPS) ---
   rep #$20
   .al
   tya
@@ -168,11 +225,10 @@ _anim_step_loop
   tay
   sep #$20
   .as
-  jsr _interp_channel
+  jsr interp_channel
   ; B result in A
 
   ; --- Pack BGR555: low = ((G&7)<<5)|R, high = (B<<2)|(G>>3) ---
-  ; B is in A
   asl a
   asl a                  ; B << 2
   sta anim_temp+3        ; save shifted B
@@ -191,21 +247,18 @@ _anim_step_loop
   asl a
   asl a                  ; (G&7) << 5
   ora anim_temp+1        ; | R
-  sta anim_temp+0        ; = low byte (safe: interp done, +0 free)
+  sta anim_temp+0        ; = low byte
 
   ; --- Write to WRAM hdma_pal table ---
-  ; Gradient colors start at hdma_pal+6 (after 3-byte header + 3-byte black)
-  ; Each HDMA entry is 3 bytes. Color bytes are at +1, +2 of each entry.
-  ; Step N → WRAM offset = 6 + N*3 + 1 = 7 + N*3
-  ply                    ; restore step index (Y = 0..19)
-  ; Compute Y*3+7 for HDMA table offset. Use 8-bit math (Y < 20).
+  ; Each HDMA entry is 3 bytes. Color bytes at +1, +2.
+  ; Step N → WRAM offset = N*3 + 1
+  ply                    ; restore step index
   tya
-  sta anim_temp+2        ; save Y (8-bit, doesn't touch +3)
+  sta anim_temp+2        ; save Y
   asl a                  ; Y*2
   clc
   adc anim_temp+2        ; Y*3
-  clc
-  adc #7                 ; +7 (header + black + skip count byte)
+  inc a                  ; +1 (skip scanline count byte)
   tax                    ; X = WRAM offset
 
   lda anim_temp+0        ; low byte
@@ -219,41 +272,20 @@ _anim_step_loop
   jmp _anim_step_loop
 
 _anim_steps_done
-  ; --- Update header and bottom border to match brightest step ---
-  ; Step 19's color is the last one computed, sitting in anim_temp+0/+3
-  lda anim_temp+0
-  sta hdma_pal+1          ; header color low (offset 1)
-  sta hdma_pal+67         ; bottom color low (offset 3+3+20*3+1)
-  lda anim_temp+3
-  sta hdma_pal+2          ; header color high (offset 2)
-  sta hdma_pal+68         ; bottom color high
-
-  ; --- Advance animation frame ---
+  ; --- Advance animation frame (step by 8 for snappy transitions) ---
   lda anim_frame
-  inc a
+  clc
+  adc #8
   cmp #128
-  bne _anim_store_frame
+  bcc _anim_store_frame
 
-  ; --- Phase transition: advance to next palette pair ---
+  ; --- Transition complete: dst becomes src, go idle ---
   lda #0
   sta anim_frame
-  ; dst becomes new src
   lda anim_dst_idx
   sta anim_src_idx
   lda anim_dst_idx+1
   sta anim_src_idx+1
-  ; Advance phase
-  lda anim_phase
-  inc a
-  cmp #NUM_PALETTES
-  bne +
-  lda #0
-+ sta anim_phase
-  ; Look up new dst palette offset
-  tax
-  lda gradient_phase_offsets,x
-  sta anim_dst_idx
-  stz anim_dst_idx+1
   bra _anim_restore_dbr
 
 _anim_store_frame
@@ -268,7 +300,86 @@ _anim_rts
 
 
 ; =============================================
-; _interp_channel - Interpolate one 5-bit color channel
+; update_ball - Move ball and bounce off edges
+; Updates OAM with new position
+; Runs in .databank $7e, sep #$20, rep #$10
+; =============================================
+update_ball
+  .databank $7e
+  sep #$20
+  .as
+  rep #$10
+  .xl
+
+  stz bounce_wall        ; clear bounce flag each frame
+
+  ; --- Move X ---
+  lda ball_x
+  clc
+  adc ball_vx          ; signed add
+  sta ball_x
+  ; Check X bounds
+  cmp #BALL_MAX_X+1
+  bcs _ball_bounce_x   ; >= MAX+1, bounce
+  cmp #BALL_MIN_X
+  bcs _ball_x_ok       ; >= MIN, ok
+_ball_bounce_x
+  ; Negate X velocity
+  lda ball_vx
+  eor #$ff
+  inc a
+  sta ball_vx
+  ; Clamp + set wall flag based on NEW velocity direction.
+  ; After negation: positive = was moving left, hit left wall
+  ;                 negative = was moving right, hit right wall
+  bmi _bx_clamp_max
+  lda #BALL_MIN_X
+  sta ball_x
+  lda #WALL_LEFT
+  sta bounce_wall
+  bra _ball_x_ok
+_bx_clamp_max
+  lda #BALL_MAX_X
+  sta ball_x
+  lda #WALL_RIGHT
+  sta bounce_wall
+_ball_x_ok
+
+  ; --- Move Y ---
+  lda ball_y
+  clc
+  adc ball_vy          ; signed add
+  sta ball_y
+  ; Check Y bounds
+  cmp #BALL_MAX_Y+1
+  bcs _ball_bounce_y   ; >= MAX+1, bounce
+  cmp #BALL_MIN_Y
+  bcs _ball_y_ok       ; >= MIN, ok
+_ball_bounce_y
+  ; Negate Y velocity
+  lda ball_vy
+  eor #$ff
+  inc a
+  sta ball_vy
+  ; Clamp + set wall flag (Y overrides X for corner bounces)
+  bmi _by_clamp_max
+  lda #BALL_MIN_Y
+  sta ball_y
+  lda #WALL_TOP
+  sta bounce_wall
+  bra _ball_y_ok
+_by_clamp_max
+  lda #BALL_MAX_Y
+  sta ball_y
+  lda #WALL_BOTTOM
+  sta bounce_wall
+_ball_y_ok
+  ; OAM is updated by the NMI handler during VBlank
+  rts
+
+
+; =============================================
+; interp_channel - Interpolate one 5-bit color channel
 ; Input:  Y = offset into palette arrays
 ;         anim_src_ptr/anim_dst_ptr = 24-bit ROM pointers
 ;         anim_frame = interpolation factor (0-127)
@@ -277,15 +388,15 @@ _anim_rts
 ; Clobbers: A
 ; Requires: .databank 0 (for multiply registers $4202-$4217)
 ; =============================================
-_interp_channel
+interp_channel
   .databank 0
   lda [anim_src_ptr],y
   sta anim_temp+0          ; save src
   lda [anim_dst_ptr],y
   sec
   sbc anim_temp+0          ; A = delta = dst - src (signed, -31..+31)
-  beq _ic_src_only         ; delta=0 → return src unchanged
-  bpl _ic_positive
+  beq ic_src_only         ; delta=0 → return src unchanged
+  bpl ic_positive
 
   ; --- Negative delta ---
   eor #$ff
@@ -308,7 +419,7 @@ _interp_channel
   adc anim_temp+0          ; A = src - offset
   rts
 
-_ic_positive
+ic_positive
   ; --- Positive delta ---
   sta $4202                ; multiplicand = delta
   lda anim_frame
@@ -325,7 +436,7 @@ _ic_positive
   adc anim_temp+0          ; A = src + offset
   rts
 
-_ic_src_only
+ic_src_only
   lda anim_temp+0          ; return src unchanged
   rts
 
@@ -390,11 +501,49 @@ setup_gfx
   stx $2102
   DMA7 $08, zero, $04, $0220  ; 544 bytes OAM
 
-  ; --- (No logo — skip logo tile copy, tilemap, sprites) ---
+  ; --- Hide sprites 1-127 (Y=$F0 = off-screen) ---
+  ; After clearing OAM to zeros, all 128 sprites sit at (0,0)
+  ; with tile 0. Without hiding them, 127 ghost copies of tile 0
+  ; pile up in the top-left corner.
+  ldx #$0002           ; OAM word address for OBJ 1 (byte 4)
+  stx $2102
+  ldx #127             ; 127 sprites to hide
+- stz $2104            ; X = 0
+  lda #$f0
+  sta $2104            ; Y = $F0 (off-screen)
+  stz $2104            ; tile = 0
+  stz $2104            ; attr = 0
+  dex
+  bne -
+
+  ; --- Load ball sprite tile to VRAM ---
+  ; OBJ tiles at OAM_TILE_BASE ($6000)
+  ldx #OAM_TILE_BASE
+  stx $2116
+  DMA7 $01, ball_tile, $18, ball_tile_end - ball_tile
+
+  ; --- Set OBJ size and tile base ---
+  ; $2101: ssnnmbbb
+  ;   ss=00 (8x8 small, 16x16 large)
+  ;   nnn=000 (name select)
+  ;   bbb=011 (base at $6000, each increment = $2000)
+  lda #$03
+  sta $2101
 
   ; --- Load palette via DMA to CGRAM ---
   stz $2121            ; CGADD = color 0
   DMA7 $00, palette, $22, $0200  ; 512 bytes → $2122
+
+  ; --- Set ball sprite color (white) in OBJ palette ---
+  ; Must happen during forced blank (CGRAM writes during
+  ; active display go to unpredictable addresses).
+  ; Ball uses color 15 of OBJ palette 0 = CGRAM color 143
+  lda #143
+  sta $2121            ; CGADD = color 143
+  lda #$ff             ; white low byte (R=31, G=31 low bits)
+  sta $2122
+  lda #$7f             ; white high byte (G high bits, B=31)
+  sta $2122
 
   ; --- Copy HDMA source tables from ROM to WRAM ---
   ; Use WRAM port ($2180) for destination.
@@ -552,8 +701,8 @@ video_init
   lda #$40             ; BG2 chr at $8000 (nibble = $4)
   sta $210b
 
-  ; Enable BG1+BG2 on main screen (no OBJ — we have no sprites)
-  lda #$03
+  ; Enable BG1+BG2+OBJ on main screen
+  lda #$13             ; OBJ + BG1 + BG2
   sta $212c
 
   ; Enable BG1+BG2 on sub screen (no OBJ)

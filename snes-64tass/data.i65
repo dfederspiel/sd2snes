@@ -68,10 +68,33 @@ anim_dst_ptr = $005B  ; 3 bytes - long pointer to dst palette in ROM
 anim_temp    = $005E  ; 4 bytes - temp workspace for interpolation
 
 ; =============================================
+; Ball sprite state ($0070-$007F)
+; =============================================
+ball_x     = $0070  ; .byte - X position (pixels)
+ball_y     = $0071  ; .byte - Y position (pixels)
+ball_vx    = $0072  ; .byte - X velocity (signed, pixels/frame)
+ball_vy    = $0073  ; .byte - Y velocity (signed, pixels/frame)
+bounce_wall = $0074 ; .byte - which wall was hit (0=none, 1-4=wall)
+
+; Screen bounds for ball (8x8 sprite)
+BALL_MIN_X = 0
+BALL_MAX_X = 248    ; 256 - 8
+BALL_MIN_Y = 1
+BALL_MAX_Y = 215    ; 224 - 8 - 1
+
+; Wall identifiers for bounce_wall
+WALL_NONE   = 0
+WALL_LEFT   = 1
+WALL_RIGHT  = 2
+WALL_TOP    = 3
+WALL_BOTTOM = 4
+
+; =============================================
 ; Animation constants
 ; =============================================
-NUM_GRADIENT_STEPS = 20
-NUM_PALETTES       = 3
+NUM_GRADIENT_STEPS = 10
+NUM_PALETTES       = 4
+PALETTE_SIZE       = 30   ; 10 R + 10 G + 10 B per palette
 
 ; =============================================
 ; HDMA tables ($0100-$02FF)

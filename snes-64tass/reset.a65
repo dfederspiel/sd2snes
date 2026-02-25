@@ -23,9 +23,27 @@ NMI_ROUTINE
   plb
   .databank 0
 
+  ; --- Update OAM sprite 0 (ball) FIRST ---
+  ; Must happen before tile DMAs consume all VBlank time.
+  ; Two tile DMAs (~65K cycles) exceed VBlank (~50K cycles),
+  ; so OAM writes placed after them would hit active display.
+  ldx #$0000
+  stx $2102            ; OAMADDL/H = sprite 0
+  lda ball_x           ; WRAM mirror $00:0070
+  sta $2104            ; OAM byte 0: X low
+  lda ball_y           ; WRAM mirror $00:0071
+  sta $2104            ; OAM byte 1: Y
+  lda #$00             ; tile 0
+  sta $2104            ; OAM byte 2: tile name
+  lda #$30             ; priority 3, palette 0, no flip
+  sta $2104            ; OAM byte 3: attributes
+  ; High table: sprite 0 = first 2 bits of byte 0
+  ldx #$0100
+  stx $2102
+  lda #$00             ; X high = 0, size = small
+  sta $2104
+
   ; --- DMA tile buffers to VRAM ---
-  ; screen_dma_disable is in WRAM; with .databank 0, accessing
-  ; $0027 reads from $00:0027 (WRAM mirror of $7E:0027)
   lda screen_dma_disable
   bne _nmi_skip_dma
 
