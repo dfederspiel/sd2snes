@@ -61,6 +61,25 @@ description: 65816 assembly and SNES PPU reference for the sd2snes menu ROM. Aut
 - In NMI handler, use long addressing: `sta $7E0027` (opcode $8F)
 - For vector tables: `.word LABEL & $ffff` (labels are 24-bit in 64tass)
 
+### 64tass Register Size Tracking (CRITICAL)
+
+64tass tracks `.as`/`.al`/`.xs`/`.xl` to determine immediate operand sizes. It does NOT propagate this state across `jsr`/`rts` or `jml` boundaries.
+
+**Every function must declare its register sizes at entry:**
+```asm
+my_function
+  sep #$20          ; also sets CPU state (belt + suspenders)
+  .as
+  rep #$10
+  .xl
+```
+
+**Why this matters**: Without `.xl`, `ldy #0` assembles as 2 bytes ($A0 $00) instead of 3 ($A0 $00 $00). If the CPU is actually in 16-bit index mode, it reads an extra byte, misaligning ALL subsequent instructions. This causes silent garbage execution — extremely hard to debug.
+
+**Also required: `.dpage 0`** — Declare once at top of main.a65 for correct indirect long `[dp],y` operand generation. Without it, the assembler generates wrong DP offsets.
+
+**Verification**: hexdump the binary at the function's address (from `--labels` output). Check that `LDY #imm` ($A0) has the right operand width.
+
 ### 64tass Macro Syntax
 
 ```asm

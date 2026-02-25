@@ -194,6 +194,52 @@ When porting a file from `snes/foo.a65` to `snes-64tass/foo.a65`:
 
 ## Porting Gotchas (Lessons Learned)
 
+### .xl/.xs MUST be declared in every function (CRITICAL)
+64tass does NOT propagate register size state across `jsr`/`rts` boundaries or `jml` targets. If a function uses 16-bit index registers, it MUST declare `.xl` (and ideally `rep #$10`) at its entry — even if the caller already set 16-bit mode.
+
+**Symptom**: Code silently generates 2-byte `ldy #imm` / `cpy #imm` instead of 3-byte. At runtime with 16-bit Y, the CPU eats an extra byte, misaligning ALL subsequent instructions. The function executes garbage and crashes or produces wrong output.
+
+**Rule**: Start every function with explicit mode declarations:
+```asm
+my_function
+  sep #$20
+  .as
+  rep #$10
+  .xl
+```
+
+The same applies to `.as`/`.al` for accumulator immediates (`lda #imm`, `cmp #imm`, `adc #imm`). Any function using these must have the correct `.as` or `.al` in effect.
+
+**How to verify**: Generate labels with `64tass --labels=labels.txt`, then hexdump the binary at the function address. Check that `LDY #nn` (opcode $A0) and `LDX #nn` (opcode $A2) have the right operand size (2 bytes for `.xs`, 3 bytes for `.xl`).
+
+### .dpage 0 MUST be declared for indirect long addressing
+64tass needs `.dpage 0` to correctly generate operand bytes for `[dp],y` (indirect long) addressing mode. Without it, the assembler may generate wrong DP offsets, causing reads from wrong memory locations.
+
+**Symptom**: `lda [ptr],y` reads garbage instead of the data at the pointer. The code runs without errors but produces wrong values. Very hard to diagnose because the opcode looks correct in a disassembler — only the operand byte is wrong.
+
+**Rule**: Add `.dpage 0` once near the top of main.a65, after `* = $C00000`:
+```asm
+* = $C00000
+.dpage 0              ; DP is always $0000 (never changed after RESET)
+```
+
+This is safe because the SNES never changes the D register in our code. If you ever use `TCD` to change DP, update `.dpage` accordingly.
+
+### Hidden B register corrupts tay in 8-bit mode
+The 65816 has a hidden "B" register (high byte of the 16-bit accumulator). With 8-bit A (`sep #$20`), `tay` transfers BOTH A (low) and B (high) to 16-bit Y. If B contains garbage, Y gets a wrong high byte.
+
+**Fix**: When computing Y offsets from A values, wrap in 16-bit A mode:
+```asm
+  rep #$20              ; 16-bit A clears B influence
+  .al
+  tya                   ; full 16-bit transfer
+  clc
+  adc #20              ; offset
+  tay                   ; clean 16-bit result
+  sep #$20
+  .as
+```
+
 ### WRAM buffer labels are already 24-bit
 Labels like `BG1_TILE_BUF = $7EB000` in memmap.i65 are full addresses. Do NOT add `$7E0000 +` when using them as DMA source. `DMA7 $01, BG1_TILE_BUF, $18, $1000` is correct.
 
