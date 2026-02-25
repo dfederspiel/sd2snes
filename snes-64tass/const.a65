@@ -11,14 +11,10 @@ zero            .word 0
 ; =============================================
 hdma_pal_src
   .byte 44
-  .byte $94, $30       ; bright pink R=20,G=4,B=12 (logo area)
+  .byte $94, $30       ; bright pink R=20,G=4,B=12 (header area)
   .byte 10
-  .byte $00, $00       ; black (transition)
-  .byte 2
-  .byte $94, $30       ; bright pink
-  .byte 11
-  .byte $00, $00       ; black (gradient start)
-  .byte 11
+  .byte $00, $00       ; black (transition border)
+  .byte 11             ; --- gradient: dark → bright pink ---
   .byte $02, $04       ; R=2,G=0,B=1 (very dark pink)
   .byte 11
   .byte $24, $08       ; R=4,G=1,B=2
@@ -38,14 +34,8 @@ hdma_pal_src
   .byte $92, $24       ; R=18,G=4,B=9
   .byte 11
   .byte $b4, $28       ; R=20,G=5,B=10 (near-bright)
-  .byte 27
-  .byte $94, $30       ; bright pink (bottom)
-  .byte 2
-  .byte $02, $04       ; very dark pink
-  .byte 11
-  .byte $94, $30       ; bright pink
-  .byte 1
-  .byte $02, $04       ; very dark pink
+  .byte 49
+  .byte $94, $30       ; bright pink (bottom border)
   .byte $00
 
 ; =============================================
