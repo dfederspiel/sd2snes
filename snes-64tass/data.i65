@@ -66,6 +66,8 @@ anim_dst_idx = $0056  ; .word - ROM offset of "to" palette
 anim_src_ptr = $0058  ; 3 bytes - long pointer to src palette in ROM
 anim_dst_ptr = $005B  ; 3 bytes - long pointer to dst palette in ROM
 anim_temp    = $005E  ; 4 bytes - temp workspace for interpolation
+staging_ptr  = $0062  ; 2 bytes - pointer to inactive hdma_pal buffer
+hdma_pal_flip = $0064 ; .byte - 0: HDMA reads A, write B; 1: HDMA reads B, write A
 
 ; =============================================
 ; Ball sprite state ($0070-$007F)
@@ -97,11 +99,18 @@ NUM_PALETTES       = 4
 PALETTE_SIZE       = 30   ; 10 R + 10 G + 10 B per palette
 
 ; =============================================
-; HDMA tables ($0100-$02FF)
+; HDMA tables ($0100-$02FF, double-buffer at $0300)
 ; Copied from ROM source tables at boot via DMA to WRAM port.
 ; HDMA reads from these WRAM copies (bank $00 mirror = bank $7E).
+;
+; hdma_pal is double-buffered to prevent HDMA read tearing:
+;   Buffer A = hdma_pal ($0100), Buffer B = hdma_pal_back ($0300)
+;   animate_gradient writes to the inactive buffer, then updates
+;   HDMA ch2's source pointer ($4322). HDMA re-reads the pointer
+;   at the next V-Blank init, making the swap atomic.
 ; =============================================
-hdma_pal              = $0100  ; 128 bytes - gradient BGR555 colors
+hdma_pal              = $0100  ; 128 bytes - gradient BGR555 colors (buffer A)
+hdma_pal_back         = $0300  ; 128 bytes - gradient BGR555 colors (buffer B)
 hdma_cg_addr          = $0180  ; 227 bytes - CGRAM address (all zeros)
 hdma_mode             = $0263  ; 5 bytes - BG mode switching
 hdma_bg1scroll        = $0268  ; 21 bytes - BG1 horizontal scroll

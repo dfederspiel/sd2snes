@@ -189,5 +189,6 @@ Fires every VBlank (~60Hz). DMAs BG1/BG2 tile buffers WRAM->VRAM, updates cursor
 - [OBJ/Sprites](reference/obj-sprites.md) — OAM format, size tables, priority rules, per-scanline limits, setup sequence, code examples
 - [BG/Backgrounds](reference/bg-backgrounds.md) — BG modes, tilemap format, CGRAM layout, character data formats, priority ordering, setup sequence
 - [Window Masking](reference/window-mask.md) — Window 1/2 registers, IN/OUT modes, mask logic (OR/AND/XOR/XNOR), color window, setup sequence
-- [DMA & HDMA](reference/dma-hdma.md) — GPDMA bulk transfers, HDMA per-scanline effects, transfer modes, B-bus patterns, table format, channel allocation
+- [DMA & HDMA](reference/dma-hdma.md) — GPDMA bulk transfers, HDMA per-scanline effects, transfer modes, B-bus patterns, table format, channel allocation, V-Blank cycle budget, CGRAM/VRAM/OAM access windows
+- [Hardware Math](reference/hardware-math.md) — Hardware multiply ($4202/$4203), divide ($4204-$4206), result registers ($4214-$4217), cycle wait times, signed multiply via Mode 7 regs, codebase examples
 - [65816 Addressing Modes](reference/addressing-modes.md) — All addressing modes with snescom syntax

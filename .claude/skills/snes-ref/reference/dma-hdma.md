@@ -540,11 +540,71 @@ gradient_table
 
 ### V-Blank Window
 
-V-Blank lasts approximately **2,273 CPU cycles** (NTSC). All VRAM/CGRAM/OAM writes must complete within this window. At 2.68 MHz DMA speed:
-- ~1 byte per cycle
-- Maximum ~2,273 bytes per V-Blank
+Source: Manual Chapter 17 (DMA budget), Chapter 21 (timing), Chapter 23 (System Flowchart NCL PG 40-42).
 
-The sd2snes NMI handler transfers: 40×64 + 40×64 + 64×9 = 5,696 bytes of tile data. This requires Forced Blank for the initial load, then the NMI transfers only the changed portion during V-Blank.
+NTSC frame: 262 total scanlines, 224 display lines = **38 V-Blank lines**.
+Each scanline = 63.5 us (H counter runs 0-339, each step = 0.186 us).
+
+**V-Blank duration**: 38 lines x 63.5 us = ~2,413 us.
+
+**DMA budget**: The manual states that for 224-line mode, general-purpose DMA can transfer a maximum of **6K bytes (6,144 bytes)** during V-Blank. At the DMA clock of 2.68 MHz, this works out to ~1 byte per machine cycle.
+
+**Auto-joypad overhead**: When enabled ($4200 bit 0 = 1), the hardware reads joypads starting 18 us (48 machine cycles) after V-Blank begins. The read takes **215 us** (~580 machine cycles / ~580 bytes of DMA time). The manual recommends starting DMA immediately at V-Blank — the DMA byte count itself serves as a timer for when joypad data is ready.
+
+**Practical budget**: ~6,144 bytes minus HDMA init overhead (each active HDMA channel re-reads its table pointer at V-Blank start). With 6 HDMA channels active, budget approximately **5,500-6,000 bytes** for GPDMA.
+
+### System Flowchart (Chapter 23)
+
+The Nintendo-recommended main loop structure (from NCL PG 40-42):
+
+```
+[INIT — during Forced Blank]
+  1. Write $8F to $2100 (forced blank on)
+  2. Clear all registers (Chapter 26)
+  3. Set PPU registers: BGMODE, base addresses, OBJ settings
+  4. Set main screen register $212C
+  5. OAM/CGRAM data settings (set OAM addr $2102=$00, CG addr $2121=$00)
+  6. DMA OAM + CGRAM data (2 channels of GPDMA)
+  7. Set VRAM address mode ($2115), VRAM address ($2116/$2117)
+  8. DMA VRAM data (OBJ/BG character data, BG tilemap data) — loop until done
+  9. Set registers for initial screen display
+  10. Write $0F to $2100 (release forced blank, full brightness)
+
+[MAIN LOOP — display period]
+  11. Generate/update data in WRAM for next frame's BG/OBJ changes
+  12. Write $81 to $4200 (enable NMI + auto joypad)
+  13. Wait for NMI...
+
+[NMI HANDLER — V-Blank period]
+  14. DMA renewed OAM data
+  15. Update BG/OBJ register settings for this frame
+  (Auto-joypad completes ~215 us after V-Blank start)
+
+[RETURN TO MAIN LOOP — display period]
+  16. Read joypad data from $4218-$421F
+  17. Process input, update game state
+  18. Loop to step 11
+```
+
+**Key insight from the flowchart**: OAM and CGRAM are DMA'd first during init (step 6), VRAM second (step 8). During the main loop, the NMI handler owns all PPU writes — the main thread only writes to WRAM buffers.
+
+### PPU Memory Access Windows
+
+Source: Manual Chapter 24, Caution #2.
+
+| Target | Forced Blank | V-Blank | H-Blank | Active Display |
+|--------|:------------:|:-------:|:-------:|:--------------:|
+| VRAM ($2118/$2119) | OK | OK | **NO** | **NO** |
+| OAM ($2104) | OK | OK | **NO** | **NO** |
+| CGRAM ($2122) | OK | OK | **OK** | **NO** |
+| Other PPU regs (write) | OK | OK | OK | OK (may glitch) |
+| Other PPU regs (read) | OK | OK | OK | OK (may be stale) |
+
+**CGRAM is unique**: It can be written during H-Blank, which is why HDMA-driven gradients work — HDMA channels 1+2 in the sd2snes menu write CGADD/CGDATA every H-Blank to change background color 0 per scanline group.
+
+**VRAM and OAM are stricter**: Only V-Blank or Forced Blank. Writing during active display produces garbage. This is why the NMI handler DMAs tile buffers and OAM — it runs at the start of V-Blank.
+
+**Write-twice latch reset** (Chapter 24, Caution #1): CGDATA ($2122) uses a low/high byte latch. If you're unsure whether the latch is in the low or high state, write the CGRAM address again via $2121 to reset it. This reinitializes the two-write sequence.
 
 ### H-Blank Window
 

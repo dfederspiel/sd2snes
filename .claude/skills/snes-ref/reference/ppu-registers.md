@@ -92,6 +92,10 @@ H/L   unused G1  G0    I1  I0
 | $2121 | CGADD | CGRAM word address (color index 0-255) | $00 |
 | $2122 | CGDATA | CGRAM data (write BGR555 low then high byte) | — |
 
+**Timing**: CGRAM can be written during **Forced Blank, V-Blank, or H-Blank** — more permissive than VRAM/OAM (V-Blank/Forced Blank only). This is why HDMA gradients work: HDMA writes CGDATA every H-Blank. Writing during active display produces corrupted colors.
+
+**Write-twice latch**: CGDATA uses a low/high byte latch (write low first, then high). If latch state is uncertain, write to $2121 (CGADD) to reset it.
+
 ## OAM (Sprites)
 | Register | Name | Purpose | Initial |
 |----------|------|---------|---------|
@@ -174,8 +178,10 @@ Multiple writes select which color planes to set. E.g.: `$3F`=R=31, `$5F`=G=31, 
 |----------|------|---------|---------|
 | $4200 | NMITIMEN | NMI/IRQ enable. $81=NMI+auto joypad, $00=disabled | $00 |
 | $4201 | WRIO | Programmable I/O port (active-low outputs) | $FF |
-| $4202/$4203 | WRMPYA/B | Unsigned 8-bit multiply (A*B, result in $4216/$4217) | $00 |
-| $4204-$4206 | WRDIVL/H/B | Unsigned division (16-bit/8-bit, result+remainder in $4214-$4217) | $00 |
+| $4202 | WRMPYA | Multiply: 8-bit multiplicand A (write first) | $00 |
+| $4203 | WRMPYB | Multiply: 8-bit multiplier B (write second, **triggers operation**). Wait 8 cycles, read product from $4216/$4217 | $00 |
+| $4204/$4205 | WRDIVL/H | Divide: 16-bit dividend C (write first, low/high) | $00 |
+| $4206 | WRDIVB | Divide: 8-bit divisor B (write second, **triggers operation**). Wait 16 cycles, read quotient $4214/$4215, remainder $4216/$4217 | $00 |
 | $4207-$420A | HTIMEL/H, VTIMEL/H | H/V IRQ trigger position | $00 |
 | $420B | MDMAEN | DMA channel enable (1 bit per channel, write-triggered) | $00 |
 | $420C | HDMAEN | HDMA channel enable (1 bit per channel) | $00 |

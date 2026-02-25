@@ -303,11 +303,12 @@ This project involves specialized hardware (SNES PPU, 65816 CPU, DMA/HDMA, OAM) 
 - OCR quality is poor for diagrams — ask the user for screenshots of flowcharts and register tables
 
 ### Domains with existing skill coverage
-- PPU registers (all $21xx/$42xx with bit layouts)
+- PPU registers (all $21xx/$42xx with bit layouts, CGRAM timing)
 - OBJ/Sprites (OAM format, sizes, priority, limits)
 - BG/Backgrounds (modes 0-7, tilemaps, CGRAM, character data)
 - Window masking (Window 1/2, logic ops, color window)
-- DMA & HDMA (transfer modes, B-bus patterns, table format)
+- DMA & HDMA (transfer modes, B-bus patterns, table format, V-Blank cycle budget, PPU access windows)
+- Hardware math (multiply $4202/$4203, divide $4204-$4206, cycle waits, signed multiply via $211B/$211C)
 - 65816 addressing modes
 
 ### Domains still needing skills (from Book I)

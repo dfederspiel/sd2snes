@@ -79,6 +79,7 @@ GAME_MAIN
   stz anim_src_idx+1
   stz anim_dst_idx
   stz anim_dst_idx+1
+  stz hdma_pal_flip      ; HDMA reads buffer A, animate writes buffer B
 
   ; --- Initialize ball sprite ---
   sep #$20             ; ensure 8-bit accumulator
@@ -194,6 +195,23 @@ _anim_setup_ptrs
   sta anim_src_ptr+2
   sta anim_dst_ptr+2
 
+  ; --- Set staging_ptr to the INACTIVE buffer (double-buffer) ---
+  ; animate_gradient writes here; HDMA reads the other buffer.
+  ; After all writes, we swap HDMA's source pointer ($4322).
+  lda hdma_pal_flip
+  bne +
+  rep #$20
+  .al
+  lda #hdma_pal_back & $ffff  ; flip=0: HDMA reads A, write to B
+  bra _staging_set
++ rep #$20
+  .al
+  lda #hdma_pal & $ffff       ; flip=1: HDMA reads B, write to A
+_staging_set
+  sta staging_ptr
+  sep #$20
+  .as
+
   ; --- Interpolate 10 gradient steps ---
   ldy #0
 
@@ -249,29 +267,44 @@ _anim_step_loop
   ora anim_temp+1        ; | R
   sta anim_temp+0        ; = low byte
 
-  ; --- Write to WRAM hdma_pal table ---
+  ; --- Write to staging buffer via (staging_ptr),y ---
+  ; Double-buffered: writes go to the inactive buffer.
   ; Each HDMA entry is 3 bytes. Color bytes at +1, +2.
-  ; Step N → WRAM offset = N*3 + 1
-  ply                    ; restore step index
+  ; Step N → byte offset = N*3 + 1
+  ply                    ; restore step index (0-9)
   tya
-  sta anim_temp+2        ; save Y
-  asl a                  ; Y*2
+  sta anim_temp+2        ; save step for later
+  asl a                  ; step*2
   clc
-  adc anim_temp+2        ; Y*3
+  adc anim_temp+2        ; step*3
   inc a                  ; +1 (skip scanline count byte)
-  tax                    ; X = WRAM offset
+  tay                    ; Y = byte offset for indirect write
 
-  lda anim_temp+0        ; low byte
-  sta hdma_pal,x
-  lda anim_temp+3        ; high byte
-  sta hdma_pal+1,x
-
+  lda anim_temp+0        ; color low byte
+  sta (staging_ptr),y    ; write to inactive buffer
   iny
+  lda anim_temp+3        ; color high byte
+  sta (staging_ptr),y    ; write to inactive buffer
+
+  ; Restore Y = step index + 1 for loop control
+  lda anim_temp+2        ; saved step index
+  inc a                  ; step++
+  tay                    ; Y = next step (tay zero-extends 8→16 in .xl)
   cpy #NUM_GRADIENT_STEPS
   beq _anim_steps_done
   jmp _anim_step_loop
 
 _anim_steps_done
+  ; --- Publish: swap HDMA ch2 source to the buffer we just wrote ---
+  ; HDMA uses internal A2Ax registers during active display, so updating
+  ; $4322/$4323 here is safe — HDMA picks up the new pointer at the
+  ; next V-Blank re-initialization. No mid-frame tear possible.
+  ldx staging_ptr
+  stx $4322              ; HDMA ch2 A-bus address → newly written buffer
+  lda hdma_pal_flip
+  eor #$01
+  sta hdma_pal_flip      ; toggle: next frame writes to the other buffer
+
   ; --- Advance animation frame (step by 8 for snappy transitions) ---
   lda anim_frame
   clc
@@ -535,8 +568,8 @@ setup_gfx
   DMA7 $00, palette, $22, $0200  ; 512 bytes → $2122
 
   ; --- Set ball sprite color (white) in OBJ palette ---
-  ; Must happen during forced blank (CGRAM writes during
-  ; active display go to unpredictable addresses).
+  ; CGRAM writes allowed during Forced Blank, V-Blank, or H-Blank.
+  ; Writing during active display produces corrupted colors.
   ; Ball uses color 15 of OBJ palette 0 = CGRAM color 143
   lda #143
   sta $2121            ; CGADD = color 143
@@ -547,9 +580,16 @@ setup_gfx
 
   ; --- Copy HDMA source tables from ROM to WRAM ---
   ; Use WRAM port ($2180) for destination.
-  ; Palette gradient
+  ; Palette gradient (buffer A at $0100)
   lda #hdma_pal >> 16
   ldx #hdma_pal & $ffff
+  stx $2181
+  sta $2183
+  DMA7 $00, hdma_pal_src, $80, hdma_pal_src_end - hdma_pal_src
+
+  ; Palette gradient (buffer B at $0300 — double-buffer copy)
+  lda #hdma_pal_back >> 16
+  ldx #hdma_pal_back & $ffff
   stx $2181
   sta $2183
   DMA7 $00, hdma_pal_src, $80, hdma_pal_src_end - hdma_pal_src
