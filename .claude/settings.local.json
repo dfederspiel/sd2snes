@@ -47,7 +47,8 @@
       "Bash(dpkg:*)",
       "Bash(timeout 3 sleep:*)",
       "Bash(git reset:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }

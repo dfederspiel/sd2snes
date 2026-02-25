@@ -1,12 +1,13 @@
 ---
 name: snes-ref
 description: 65816 assembly and SNES PPU reference for the sd2snes menu ROM. Auto-loads when editing .a65 assembly files, working with SNES graphics, palettes, HDMA, or the menu ROM codebase.
-user-invocable: false
 ---
 
 # sd2snes Menu ROM - Quick Reference
 
-## snescom Assembler Syntax
+## Assembler Syntax Comparison
+
+### snescom (snes/ directory)
 
 | Syntax | Meaning |
 |--------|---------|
@@ -16,13 +17,70 @@ user-invocable: false
 | `#!label` | 16-bit address of label |
 | `.as` / `.al` | 8-bit / 16-bit accumulator mode hint |
 | `.xs` / `.xl` | 8-bit / 16-bit index register mode hint |
-| `sep #$20 : .as` | Set 8-bit A (instruction + mode hint) |
-| `rep #$10 : .xl` | Set 16-bit X/Y |
-| `rep #$30 : .al : .xl` | Set 16-bit A and X/Y |
+| `sep #$20 : .as` | Set 8-bit A (instruction + mode hint, `:` chains) |
 | `.byt` | Define byte(s) |
 | `.word` | Define 16-bit word(s) |
-| `- bra -` | Branch to previous anonymous label (infinite loop) |
+| `#define NAME value` | Preprocessor constant (cpp) |
+| `.link page $C0` | Set output address/bank |
+| `- bra -` | Branch to previous anonymous label |
 | `-` / `+` | Anonymous labels (backward / forward) |
+
+### 64tass (snes-64tass/ directory)
+
+| Syntax | Meaning |
+|--------|---------|
+| `sta $7E0027` | Long addressing auto-selected (addr > $FFFF) |
+| `sta $2100` | Absolute addressing auto-selected (addr < $10000) |
+| `label >> 16` | Bank byte of label (replaces `#^label`) |
+| `label & $ffff` | 16-bit address of label (replaces `#!label`) |
+| `.as` / `.al` / `.xs` / `.xl` | Same as snescom |
+| `sep #$20` then `.as` on next line | No `:` chaining — separate lines |
+| `.byte` | Define byte(s) (NOT `.byt`) |
+| `.word` | Define 16-bit word(s) (same) |
+| `.text "string"` | Define ASCII text (NOT `.byt "text"`) |
+| `NAME = $value` | Constant assignment (replaces `#define`) |
+| `* = $C00000` | Set program counter (replaces `.link page`) |
+| `.include "file"` | Include source file (no separate linker) |
+| `.fill count, value` | Fill bytes |
+| `.cpu "65816"` | Set CPU type (required at top) |
+
+### 64tass Data Bank Tracking (CRITICAL)
+
+64tass enforces that absolute addresses match the current data bank register. This catches real hardware bugs (e.g., accessing PPU registers with wrong DBR).
+
+| Directive | When to use |
+|-----------|-------------|
+| `.databank 0` | After RESET, or when DBR=$00 (PPU/CPU register access) |
+| `.databank $7e` | After `lda #$7e / pha / plb` (WRAM variable access) |
+| `.databank ?` | NMI/IRQ handlers where DBR is unknown |
+
+**Key rules:**
+- PPU registers ($21xx) and CPU registers ($42xx) only exist in banks $00-$3F
+- With DBR=$7E, `sta $2100` writes to WRAM $7E2100, NOT the PPU register!
+- `stz` has no long addressing mode — must set DBR correctly or use direct page
+- In NMI handler, use long addressing: `sta $7E0027` (opcode $8F)
+- For vector tables: `.word LABEL & $ffff` (labels are 24-bit in 64tass)
+
+### 64tass Macro Syntax
+
+```asm
+; snescom:  DMA7 #$01, src, $2118, #size
+; 64tass:
+.macro DMA7 mode, src, dest, size
+  lda #\mode
+  sta $4370
+  lda #\dest
+  sta $4371
+  ldx #\src & $ffff
+  stx $4372
+  lda #\src >> 16
+  sta $4374
+  ldx #\size
+  stx $4375
+  lda #$80
+  sta $420b
+.endm
+```
 
 ## 65816 Key Instructions
 
@@ -64,6 +122,7 @@ Conversion: `low = (green_low3 << 5) | red5`, `high = (blue5 << 2) | green_high2
 ## hiprint Text Rendering Pattern
 
 ```asm
+; snescom syntax:
   lda #<row>          ; tile row (9+ = below logo)
   sta print_y
   lda #<col>          ; tile column (0 = left edge)
