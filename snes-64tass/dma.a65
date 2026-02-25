@@ -1,0 +1,106 @@
+; dma.a65 - DMA helpers and HDMA setup (64tass)
+; Requires: .databank 0 (all register access is $42xx/$21xx)
+
+; =============================================
+; killdma - Stop and clear all DMA channels
+; =============================================
+killdma
+  .databank 0
+  php
+  rep #$20
+  .al
+  sep #$10
+  .xs
+  stz $420b
+  lda #$ffff
+  ldy #$7c
+- dey
+  dey
+  sta $4300, y
+  bne -
+  plp
+  rts
+
+; =============================================
+; setup_hdma - Configure 6 HDMA channels and enable NMI
+; Channel 0: BG2 vertical scroll ($2110)
+; Channel 1: CG address ($2121) — always writes 0
+; Channel 2: CG data ($2122) — gradient colors
+; Channel 3: BG mode ($2105) — Mode 3/5 switch
+; Channel 4: BG1 horizontal scroll ($210D)
+; Channel 5: Color math ($2131+$2132) — selection bar
+; Requires: .databank 0, HDMA tables already in WRAM
+; =============================================
+setup_hdma
+  .databank 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+
+  ; Channel 0: BG2 vertical scroll
+  lda #$02              ; A→B, direct, 2× single reg
+  sta $4300
+  lda #$10              ; $2110 = BG2VOFS
+  sta $4301
+  lda #hdma_bg2scroll >> 16
+  ldy #hdma_bg2scroll & $ffff
+  sty $4302
+  sta $4304
+
+  ; Channel 1: CG address (always 0)
+  lda #$00              ; A→B, direct, 1× single reg
+  sta $4310
+  lda #$21              ; $2121 = CGADD
+  sta $4311
+  lda #hdma_cg_addr >> 16
+  ldy #hdma_cg_addr & $ffff
+  sty $4312
+  sta $4314
+
+  ; Channel 2: CG data (gradient colors)
+  lda #$02              ; A→B, direct, 2× single reg
+  sta $4320
+  lda #$22              ; $2122 = CGDATA
+  sta $4321
+  lda #hdma_pal >> 16
+  ldy #hdma_pal & $ffff
+  sty $4322
+  sta $4324
+
+  ; Channel 3: BG mode switch
+  lda #$00              ; A→B, direct, 1× single reg
+  sta $4330
+  lda #$05              ; $2105 = BGMODE
+  sta $4331
+  lda #hdma_mode >> 16
+  ldy #hdma_mode & $ffff
+  sty $4332
+  sta $4334
+
+  ; Channel 4: BG1 horizontal scroll
+  lda #$03              ; A→B, direct, 2× 2× single reg
+  sta $4340
+  lda #$0d              ; $210D = BG1HOFS
+  sta $4341
+  lda #hdma_bg1scroll >> 16
+  ldy #hdma_bg1scroll & $ffff
+  sty $4342
+  sta $4344
+
+  ; Channel 5: Color math (selection bar)
+  lda #$01              ; A→B, direct, 1× two reg
+  sta $4350
+  lda #$31              ; $2131 + $2132 = CGADSUB + COLDATA
+  sta $4351
+  lda #hdma_math >> 16
+  ldy #hdma_math & $ffff
+  sty $4352
+  sta $4354
+
+  jsr waitblank
+  lda #$3f              ; enable HDMA ch. 0-5
+  sta $420c
+  lda #$81              ; VBlank NMI + Auto Joypad Read
+  sta $4200
+  rts

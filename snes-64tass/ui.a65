@@ -1,0 +1,113 @@
+; ui.a65 - Text rendering (64tass)
+; hiprint: Mode 5 pseudo-8x8 text using two BG layers.
+
+; =============================================
+; hiprint - Print string in Mode 5 pseudo-hires
+; Characters 0 and 1 are "end of string".
+; Input:  print_count, print_x, print_y, print_src, print_bank, print_pal
+; Output: print_done (chars printed), print_over (truncated?)
+; =============================================
+hiprint
+  php
+  phd
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  pea $0000
+  pld                   ; DP = $0000
+  .dpage 0
+  phb
+  lda #$7e
+  pha
+  plb                   ; DBR = $7E
+  .databank $7e
+
+  ldx print_src
+  stx print_ptr
+  lda print_bank
+  sta print_ptr+2
+
+  rep #$30
+  .al
+  .xl
+
+  lda print_pal
+  and #$00ff
+  xba
+  asl
+  asl
+  ora #$2000
+  sta print_temp
+
+  lda print_count
+  and #$00ff
+  beq hiprint_end
+  tay
+
+  lda print_x
+  and #$00ff
+  sta print_x
+
+  lda print_y
+  and #$00ff
+  xba                   ; multiply by 256
+  lsr                   ; /2 = multiply by 128
+  lsr                   ; /4 = multiply by 64 (bytes per tilemap row)
+  clc
+  adc print_x
+  and #$fffe            ; align to word boundary
+  tax
+
+  lda print_x
+  lsr
+  bcs hiprint_bg1       ; odd column → start with BG1
+
+hiprint_bg2
+  lda [print_ptr]
+  ror
+  and #$007f
+  beq hiprint_end
+  rol
+  asl
+  inc print_ptr
+  ora print_temp
+  sta BG2_TILE_BUF, x
+  dey
+  beq hiprint_end
+
+hiprint_bg1
+  lda [print_ptr]
+  ror
+  and #$007f
+  beq hiprint_end
+  rol
+  asl
+  inc print_ptr
+  ora print_temp
+  sta BG1_TILE_BUF, x
+  inx
+  inx
+  dey
+  beq hiprint_end
+  bra hiprint_bg2
+
+hiprint_end
+  sep #$20
+  .as
+  lda [print_ptr]
+  and #$fe              ; mask "soft" end of string
+  sta print_over
+  tya
+  sec
+  sbc print_count
+  eor #$ff
+  inc a
+  sta print_done
+
+  plb
+  pld
+  .dpage ?
+  .databank ?           ; restored to caller's values
+  plp
+  rts

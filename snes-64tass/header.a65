@@ -1,0 +1,105 @@
+; header.a65 - ROM header and interrupt vectors (64tass version)
+; HiROM layout: code at $C00000, header at $C0FFB0-$C0FFFF
+
+; --- Interrupt vectors and RESET entry ---
+; Placed at $C0FF00 to match original layout
+* = $C0FF00
+nmihook_ptr
+  .word 0           ; placeholder for nmihook (overwritten at runtime)
+
+RESET
+  sei
+  clc
+  xce               ; switch to native mode
+  rep #$20
+  .al
+  lda #$1fff
+  tcs               ; set stack pointer
+  jml GAME_MAIN     ; long jump to main entry point
+
+NMI_16bit
+  php
+  rep #$30
+  .al
+  .xl
+  pha
+  phx
+  phy
+  phd
+  phb
+  jsl NMI_ROUTINE
+  rep #$30
+  .al
+  .xl
+int_exit
+  plb
+  pld
+  ply
+  plx
+  pla
+  plp
+  rti
+
+IRQ_16bit
+  php
+  rep #$30
+  .al
+  .xl
+  pha
+  phx
+  phy
+  phd
+  phb
+  jsl IRQ_ROUTINE
+  rep #$30
+  .al
+  .xl
+  bra int_exit
+
+; Error vectors - infinite wait
+ABT_handler
+BRK_handler
+COP_handler
+- wai
+  bra -
+
+; --- ROM header at $FFB0 ---
+* = $C0FFB0
+  .text "MR"        ; company id (2 bytes)
+  .text "SNSD"      ; rom id (4 bytes)
+
+; Pad to $FFC0
+.fill $C0FFC0 - *, 0
+
+* = $C0FFC0
+  .text "SD2SNES 64TASS TEST "
+;        123456789012345678901  - 21 chars max
+
+* = $C0FFD5
+  .byte $31          ; rom map + speed (HiROM FastROM)
+  .byte $55          ; rom type (SRTC)
+  .byte $06          ; rom size (64 kByte)
+  .byte $03          ; sram size (8 kBit)
+  .byte $01          ; rom region (USA)
+  .byte $33          ; company id flag
+
+* = $C0FFDC
+  .word 0, 0         ; checksums (placeholder)
+
+; --- Native mode vectors (need & $ffff since labels are 24-bit) ---
+* = $C0FFE4
+  .word COP_handler & $ffff  ; COP
+  .word BRK_handler & $ffff  ; BRK
+  .word ABT_handler & $ffff  ; ABT
+  .word NMI_16bit & $ffff    ; NMI
+  .word 0                    ; unused
+  .word IRQ_16bit & $ffff    ; IRQ
+
+; --- Emulation mode vectors ---
+* = $C0FFF4
+  .word COP_handler & $ffff  ; COP
+* = $C0FFF8
+  .word ABT_handler & $ffff  ; ABT
+  .word ABT_handler & $ffff  ; NMI (use error handler in emu mode)
+  .word RESET & $ffff        ; RESET
+  .word BRK_handler & $ffff  ; IRQ/BRK

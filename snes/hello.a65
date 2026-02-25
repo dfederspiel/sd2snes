@@ -1,0 +1,50 @@
+;; Minimal SNES test ROM - blue screen
+;; Verifies bsnes-plus is working
+.link page $c0
+
+*= $C0FF00
+RESET:
+  sei
+  clc
+  xce               ; switch to native mode
+  sep #$20 : .as    ; 8-bit A
+  lda #$8f
+  sta $2100         ; force blank, max brightness
+  stz $2105         ; mode 0
+  stz $212c         ; disable all BG layers
+  stz $212d
+  stz $2121         ; CGRAM address 0
+  lda #$00          ; color 0 = blue (BGR555: %0111110000000000)
+  sta $2122         ; low byte
+  lda #$7c          ; high byte
+  sta $2122
+  lda #$0f
+  sta $2100         ; screen on, full brightness
+- bra -             ; infinite loop
+
+NMI:
+  rti
+IRQ:
+  lda $4211
+  rti
+
+*= $C0FFB0
+  .byt "MR"
+  .byt "TEST"
+
+*= $C0FFC0
+  .byt "HELLO BLUE SCREEN    "
+
+*= $C0FFD5  .byt $21  ; HiROM
+*= $C0FFD6  .byt $00  ; ROM only
+*= $C0FFD7  .byt $06  ; 64KB
+*= $C0FFD8  .byt $00  ; no SRAM
+*= $C0FFD9  .byt $01  ; USA
+
+*= $C0FFDC  .word 0,0
+
+*= $C0FFEA  .word NMI   ; NMI vector (native)
+*= $C0FFEE  .word IRQ   ; IRQ vector (native)
+*= $C0FFFA  .word NMI   ; NMI vector (emulation)
+*= $C0FFFC  .word RESET ; RESET vector
+*= $C0FFFE  .word IRQ   ; IRQ vector (emulation)

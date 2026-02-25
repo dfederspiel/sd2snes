@@ -1,0 +1,949 @@
+; main.a65 - sd2snes menu ROM entry point (64tass Milestone 2)
+; Pink gradient background + hiprint text rendering, no logo bitmap.
+; Always enters emulator mode (MCU detection deferred to Milestone 3).
+
+.cpu "65816"
+
+; --- Include constants and macros ---
+.include "memmap.i65"
+.include "dma.i65"
+.include "data.i65"
+
+; =============================================
+; Code starts at $C00000 (HiROM bank $C0)
+; =============================================
+* = $C00000
+.dpage 0                 ; direct page is always $0000 (never changed)
+
+; Reserve space for nmihook pointer (matches original layout)
+.word 0               ; nmihook placeholder
+
+; =============================================
+; GAME_MAIN - Entry point from RESET
+; =============================================
+GAME_MAIN
+  sep #$20
+  .as
+  .databank 0          ; DBR = $00 after RESET
+
+  stz $4200            ; inhibit VBlank NMI
+  lda #$01
+  sta $420d            ; enable FastROM
+
+  ; --- Cold boot init sequence ---
+  jsr killdma
+  jsr snes_init
+  jsr clear_vram
+  jsr clear_cgram
+  jsr waitblank
+  jsr setup_gfx
+  jsr colortest
+  jsr video_init
+  jsr setup_hdma
+
+  ; --- Screen on (emulator: always max brightness) ---
+  jsr screen_on
+
+  ; --- Emulator mode: show POC display ---
+  ; (MCU detection deferred to Milestone 3)
+  lda #$0f
+  sta cur_bright       ; WRAM mirror ($00:0031)
+  sta tgt_bright       ; WRAM mirror ($00:0030)
+  sta bright_limit     ; WRAM mirror ($00:0032)
+  sta $2100            ; force brightness now
+
+  jsr poc_display
+
+  ; --- Initialize animation state ---
+  ; Start at pink (palette 0), transitioning to purple (palette 1)
+  stz anim_frame
+  lda #2               ; update every 3rd frame (~20fps animation)
+  sta anim_speed
+  stz anim_timer
+  stz anim_phase
+  ; src = palette 0 (offset 0), dst = palette 1 (offset 60)
+  stz anim_src_idx
+  stz anim_src_idx+1
+  lda #PALETTE_SIZE
+  sta anim_dst_idx
+  stz anim_dst_idx+1
+
+  ; --- Switch data bank to $7E for WRAM variable access ---
+  lda #$7e
+  pha
+  plb
+  .databank $7e
+
+  ; --- Main loop: wait for NMI each frame ---
+mainloop
+- lda isr_done
+  lsr
+  bcc -
+  stz isr_done
+  jsr animate_gradient
+  bra mainloop
+
+
+; =============================================
+; animate_gradient - Per-frame gradient color cycling
+; Interpolates between src and dst gradient palettes
+; using SNES hardware multiply. Updates hdma_pal WRAM.
+; Runs in .databank $7e, sep #$20, rep #$10
+; =============================================
+animate_gradient
+  .databank $7e
+  sep #$20
+  .as
+  rep #$10
+  .xl
+
+  ; --- Speed gate: only animate every anim_speed+1 frames ---
+  lda anim_timer
+  inc a
+  cmp anim_speed
+  bcc _anim_tick
+  lda #0               ; time to animate — reset timer
+_anim_tick
+  sta anim_timer
+  beq +                  ; timer == 0 → time to animate
+  jmp _anim_rts          ; timer != 0 → skip this frame
++
+
+  ; --- Switch to DBR=$00 for hardware multiply register access ---
+  phb
+  lda #$00
+  pha
+  plb
+  .databank 0
+
+  ; --- Set up src/dst palette pointers (24-bit into ROM) ---
+  rep #$20
+  .al
+  lda anim_src_idx
+  clc
+  adc #gradient_pal_data & $ffff
+  sta anim_src_ptr
+  lda anim_dst_idx
+  clc
+  adc #gradient_pal_data & $ffff
+  sta anim_dst_ptr
+  sep #$20
+  .as
+  lda #gradient_pal_data >> 16
+  sta anim_src_ptr+2
+  sta anim_dst_ptr+2
+
+  ; --- Interpolate 20 gradient steps ---
+  ; Y = step index (0..19), also used as palette array offset
+  ldy #0
+
+_anim_step_loop
+  phy                    ; save step index
+
+  ; --- Interpolate R channel (offset Y + 0) ---
+  ; NOTE: anim_temp+0 is reserved for _interp_channel's src storage.
+  ; R/G results go in +1/+2, packing uses +3.
+  jsr _interp_channel
+  sta anim_temp+1        ; save interpolated R
+
+  ; --- Interpolate G channel (offset Y + 20) ---
+  ; Must use 16-bit A for tya/tay — 8-bit tay corrupts Y high byte
+  rep #$20
+  .al
+  tya
+  clc
+  adc #NUM_GRADIENT_STEPS
+  tay
+  sep #$20
+  .as
+  jsr _interp_channel
+  sta anim_temp+2        ; save interpolated G
+
+  ; --- Interpolate B channel (offset Y + 40) ---
+  rep #$20
+  .al
+  tya
+  clc
+  adc #NUM_GRADIENT_STEPS
+  tay
+  sep #$20
+  .as
+  jsr _interp_channel
+  ; B result in A
+
+  ; --- Pack BGR555: low = ((G&7)<<5)|R, high = (B<<2)|(G>>3) ---
+  ; B is in A
+  asl a
+  asl a                  ; B << 2
+  sta anim_temp+3        ; save shifted B
+  lda anim_temp+2        ; G
+  lsr a
+  lsr a
+  lsr a                  ; G >> 3
+  ora anim_temp+3        ; (B<<2) | (G>>3)
+  sta anim_temp+3        ; = high byte
+
+  lda anim_temp+2        ; G
+  and #$07
+  asl a
+  asl a
+  asl a
+  asl a
+  asl a                  ; (G&7) << 5
+  ora anim_temp+1        ; | R
+  sta anim_temp+0        ; = low byte (safe: interp done, +0 free)
+
+  ; --- Write to WRAM hdma_pal table ---
+  ; Gradient colors start at hdma_pal+6 (after 3-byte header + 3-byte black)
+  ; Each HDMA entry is 3 bytes. Color bytes are at +1, +2 of each entry.
+  ; Step N → WRAM offset = 6 + N*3 + 1 = 7 + N*3
+  ply                    ; restore step index (Y = 0..19)
+  ; Compute Y*3+7 for HDMA table offset. Use 8-bit math (Y < 20).
+  tya
+  sta anim_temp+2        ; save Y (8-bit, doesn't touch +3)
+  asl a                  ; Y*2
+  clc
+  adc anim_temp+2        ; Y*3
+  clc
+  adc #7                 ; +7 (header + black + skip count byte)
+  tax                    ; X = WRAM offset
+
+  lda anim_temp+0        ; low byte
+  sta hdma_pal,x
+  lda anim_temp+3        ; high byte
+  sta hdma_pal+1,x
+
+  iny
+  cpy #NUM_GRADIENT_STEPS
+  beq _anim_steps_done
+  jmp _anim_step_loop
+
+_anim_steps_done
+  ; --- Update header and bottom border to match brightest step ---
+  ; Step 19's color is the last one computed, sitting in anim_temp+0/+3
+  lda anim_temp+0
+  sta hdma_pal+1          ; header color low (offset 1)
+  sta hdma_pal+67         ; bottom color low (offset 3+3+20*3+1)
+  lda anim_temp+3
+  sta hdma_pal+2          ; header color high (offset 2)
+  sta hdma_pal+68         ; bottom color high
+
+  ; --- Advance animation frame ---
+  lda anim_frame
+  inc a
+  cmp #128
+  bne _anim_store_frame
+
+  ; --- Phase transition: advance to next palette pair ---
+  lda #0
+  sta anim_frame
+  ; dst becomes new src
+  lda anim_dst_idx
+  sta anim_src_idx
+  lda anim_dst_idx+1
+  sta anim_src_idx+1
+  ; Advance phase
+  lda anim_phase
+  inc a
+  cmp #NUM_PALETTES
+  bne +
+  lda #0
++ sta anim_phase
+  ; Look up new dst palette offset
+  tax
+  lda gradient_phase_offsets,x
+  sta anim_dst_idx
+  stz anim_dst_idx+1
+  bra _anim_restore_dbr
+
+_anim_store_frame
+  sta anim_frame
+
+_anim_restore_dbr
+  ; --- Restore DBR=$7E ---
+  plb
+  .databank $7e
+_anim_rts
+  rts
+
+
+; =============================================
+; _interp_channel - Interpolate one 5-bit color channel
+; Input:  Y = offset into palette arrays
+;         anim_src_ptr/anim_dst_ptr = 24-bit ROM pointers
+;         anim_frame = interpolation factor (0-127)
+; Output: A = interpolated value (0-31)
+; Preserves: Y
+; Clobbers: A
+; Requires: .databank 0 (for multiply registers $4202-$4217)
+; =============================================
+_interp_channel
+  .databank 0
+  lda [anim_src_ptr],y
+  sta anim_temp+0          ; save src
+  lda [anim_dst_ptr],y
+  sec
+  sbc anim_temp+0          ; A = delta = dst - src (signed, -31..+31)
+  beq _ic_src_only         ; delta=0 → return src unchanged
+  bpl _ic_positive
+
+  ; --- Negative delta ---
+  eor #$ff
+  inc a                    ; A = |delta|
+  sta $4202                ; multiplicand = |delta|
+  lda anim_frame
+  sta $4203                ; multiplier → product ready in 8 cycles
+  ; Fill the 8-cycle wait (need 8 master cycles minimum):
+  nop                      ; 2 cycles
+  nop                      ; 2 cycles
+  nop                      ; 2 cycles
+  nop                      ; 2 cycles = 8 total
+  lda $4216
+  asl a                    ; carry = bit 7 of low product byte
+  lda $4217
+  rol a                    ; A = product >> 7
+  eor #$ff
+  inc a                    ; negate offset
+  clc
+  adc anim_temp+0          ; A = src - offset
+  rts
+
+_ic_positive
+  ; --- Positive delta ---
+  sta $4202                ; multiplicand = delta
+  lda anim_frame
+  sta $4203                ; multiplier
+  nop                      ; 2 cycles
+  nop                      ; 2 cycles
+  nop                      ; 2 cycles
+  nop                      ; 2 cycles = 8 total
+  lda $4216
+  asl a                    ; carry = bit 7
+  lda $4217
+  rol a                    ; A = product >> 7
+  clc
+  adc anim_temp+0          ; A = src + offset
+  rts
+
+_ic_src_only
+  lda anim_temp+0          ; return src unchanged
+  rts
+
+
+; =============================================
+; colortest - Clear color window settings
+; =============================================
+colortest
+  .databank 0
+  sep #$20
+  .as
+  stz $2130
+  rts
+
+; =============================================
+; setup_gfx - Load fonts, palette, HDMA tables
+; Requires: DBR=$00, force blank on
+; =============================================
+setup_gfx
+  .databank 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+
+  stz $4200            ; disable NMI during setup
+  stz $420b            ; disable DMA
+  stz $420c            ; disable HDMA
+
+  ; --- Clear WRAM variable area ($7E:0000-$7E:00FF) ---
+  ; Only clear the variable/state area. Stack lives at $1FFF downward,
+  ; so we must NOT DMA-clear all of low WRAM while inside a JSR.
+  ; HDMA tables ($0100+) are overwritten by ROM→WRAM copies below.
+  ldx #$0000
+  stx $2181
+  lda #$00
+  sta $2183            ; bank $7E (bit 0 = 0)
+  DMA7 $08, zero, $80, $0100  ; clear 256 bytes ($0000-$00FF)
+
+  ; --- Clear WRAM tile buffer area ($7E:8000-$7E:FFFF) ---
+  ldx #$8000
+  stx $2181
+  lda #$00
+  sta $2183
+  DMA7 $08, zero, $80, $8000
+
+  ; --- Generate fonts in VRAM ---
+  jsr genfonts
+
+  ; --- Clear BG1 tilemap in VRAM ---
+  ldx #BG1_TILE_BASE
+  stx $2116
+  DMA7 $09, zero, $18, $1000  ; zero fill 4096 bytes
+
+  ; --- Clear BG2 tilemap in VRAM ---
+  ldx #BG2_TILE_BASE
+  stx $2116
+  DMA7 $09, zero, $18, $1000
+
+  ; --- Clear OAM tables ---
+  ldx #$0000
+  stx $2102
+  DMA7 $08, zero, $04, $0220  ; 544 bytes OAM
+
+  ; --- (No logo — skip logo tile copy, tilemap, sprites) ---
+
+  ; --- Load palette via DMA to CGRAM ---
+  stz $2121            ; CGADD = color 0
+  DMA7 $00, palette, $22, $0200  ; 512 bytes → $2122
+
+  ; --- Copy HDMA source tables from ROM to WRAM ---
+  ; Use WRAM port ($2180) for destination.
+  ; Palette gradient
+  lda #hdma_pal >> 16
+  ldx #hdma_pal & $ffff
+  stx $2181
+  sta $2183
+  DMA7 $00, hdma_pal_src, $80, hdma_pal_src_end - hdma_pal_src
+
+  ; CG address table
+  lda #hdma_cg_addr >> 16
+  ldx #hdma_cg_addr & $ffff
+  stx $2181
+  sta $2183
+  DMA7 $00, hdma_cg_addr_src, $80, 227
+
+  ; Screen mode table
+  lda #hdma_mode >> 16
+  ldx #hdma_mode & $ffff
+  stx $2181
+  sta $2183
+  DMA7 $00, hdma_mode_src, $80, 5
+
+  ; BG1 scroll table
+  lda #hdma_bg1scroll >> 16
+  ldx #hdma_bg1scroll & $ffff
+  stx $2181
+  sta $2183
+  DMA7 $00, hdma_bg1scroll_src, $80, 21
+
+  ; BG2 scroll table
+  lda #hdma_bg2scroll >> 16
+  ldx #hdma_bg2scroll & $ffff
+  stx $2181
+  sta $2183
+  DMA7 $00, hdma_bg2scroll_src, $80, 13
+
+  ; Color math table
+  lda #hdma_math >> 16
+  ldx #hdma_math & $ffff
+  stx $2181
+  sta $2183
+  DMA7 $00, hdma_math_src, $80, 19
+
+  rts
+
+; =============================================
+; genfonts - Load font tiles into VRAM
+; Two copies: pseudo-4bpp at $0000, 2bpp at $4000
+; Uses DMA7 auto-increment trick: each trigger advances
+; the source address, so a loop of triggers loads sequential
+; characters with gaps in VRAM.
+; Requires: DBR=$00
+; =============================================
+genfonts
+  .databank 0
+  php
+  rep #$10
+  .xl
+  sep #$20
+  .as
+
+  ; Clear VRAM font area 1: $0000-$3FFF (pseudo-4bpp, 16KB)
+  ldx #$0000
+  stx $2116
+  DMA7 $09, zero, $18, $4000
+
+  ; Clear VRAM font area 2: $4000-$5FFF (2bpp, 8KB)
+  ldx #$4000
+  stx $2116
+  DMA7 $09, zero, $18, $2000
+
+  ; --- Load font as pseudo-4bpp at VRAM $0000 ---
+  ; Each 2bpp character is 16 bytes. In pseudo-4bpp mode,
+  ; each tile slot is 32 bytes ($20). We DMA 16 bytes per
+  ; character, stepping VRAM address by $20 each iteration.
+  sep #$10
+  .xs
+  rep #$20
+  .al
+
+  stz $2116            ; VRAM address = 0
+  stz $2117
+  ldx #$01             ; DMA mode: A→B, 2-reg (word writes)
+  stx $4370
+  ldx #font >> 16
+  stx $4374            ; source bank
+  lda #font & $ffff
+  sta $4372            ; source address (auto-increments across triggers)
+  lda #$0010
+  sta $4375            ; transfer 16 bytes per trigger
+  ldx #$18             ; B-bus = $2118 (VMDATAL)
+  stx $4371
+
+  lda #$0000
+- sta $2116            ; set VRAM address for this character
+  ldx #$10
+  stx $4375            ; reset transfer size (consumed by each trigger)
+  ldx #$80
+  stx $420b            ; trigger DMA channel 7
+  clc
+  adc #$20             ; next tile slot (32 bytes apart in pseudo-4bpp)
+  cmp #$2000
+  bne -
+
+  ; --- Load font as 2bpp at VRAM $4000 ---
+  ; Same trick, but tiles are 16 bytes apart ($10 step)
+  ldx #font >> 16
+  stx $4374
+  lda #font & $ffff
+  sta $4372            ; reset source to font start
+
+  lda #$4000
+- sta $2116
+  ldx #$10
+  stx $4375
+  ldx #$80
+  stx $420b
+  clc
+  adc #$10             ; next tile slot (16 bytes apart in 2bpp)
+  cmp #$5000
+  bne -
+
+  plp
+  rts
+
+
+; =============================================
+; video_init - Configure BG modes, layers, brightness vars
+; Sets up Mode 3 display with Mode 5 via HDMA switching
+; Requires: DBR=$00
+; =============================================
+video_init
+  .databank 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+
+  lda #$03             ; Mode 3, 8×8 tiles (Mode 5 via HDMA)
+  sta $2105
+
+  ; BG1 tilemap at VRAM $B000, 32×64 size
+  lda #$58             ; ($B000 >> 8) = $58... wait
+  ora #$02             ; SC size 32×64
+  sta $2107
+
+  ; BG2 tilemap at VRAM $A000, 32×64 size
+  lda #$50             ; ($A000 >> 8) = $50... wait
+  ora #$02
+  sta $2108
+
+  ; Chr base: BG1=$0000, BG2=$8000
+  lda #$40             ; BG2 chr at $8000 (nibble = $4)
+  sta $210b
+
+  ; Enable BG1+BG2 on main screen (no OBJ — we have no sprites)
+  lda #$03
+  sta $212c
+
+  ; Enable BG1+BG2 on sub screen (no OBJ)
+  lda #$03
+  sta $212d
+
+  ; Window 1 for color math (OBJ window)
+  lda #$20
+  sta $2125
+
+  ; Cut off leftmost subscreen pixel garbage
+  lda #$01
+  sta $2126            ; window 1 left
+  lda #$fe
+  sta $2127            ; window 1 right
+
+  ; 224-line mode
+  stz $2133            ; SETINI = normal (224 lines)
+
+  ; Color math: sub screen + fixed color
+  lda #$10
+  sta $2130
+
+  ; Window mask for main/sub screens
+  lda #$1f
+  sta $212e
+  sta $212f
+
+  ; --- Initialize WRAM state variables ---
+  ; With .databank 0, these access the WRAM mirror at $00:xxxx
+  lda #29              ; bar_yl=29 → bar_y=224 → clamps to scanline 1 (off-screen)
+  sta bar_yl
+  stz cur_bright
+  stz tgt_bright
+  lda #$01
+  sta fade_speed
+  stz fade_count
+  stz screen_dma_disable
+  stz screen_dma_disable+1
+
+  rts
+
+
+; =============================================
+; screen_on - Turn screen on with brightness
+; In emulator mode, CFG_BRIGHTNESS_LIMIT = 0 → use $0F
+; =============================================
+screen_on
+  .databank 0
+  sep #$20
+  .as
+  stz $2100            ; screen on, 0% brightness
+  ; Always use max brightness (emulator mode)
+  lda #$0f
+  sta tgt_bright
+  sta bright_limit
+  sta cur_bright
+  sta $2100            ; set brightness immediately
+  rts
+
+
+; =============================================
+; poc_display - Render emulator mode text
+; Uses hiprint to write text to WRAM tile buffers.
+; Caller must wait for NMI to DMA buffers to VRAM.
+; Requires: DBR=$00
+; =============================================
+poc_display
+  .databank 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+
+  ; title: "S A T E L L A V I E W" at row 3, bold
+  lda #3
+  sta print_y
+  lda #5               ; centered: (32-21)/2 ≈ 5
+  sta print_x
+  lda #title_str1 >> 16
+  sta print_bank
+  ldx #title_str1 & $ffff
+  stx print_src
+  lda #1               ; bold palette
+  sta print_pal
+  lda #32
+  sta print_count
+  jsr hiprint
+
+  ; subtitle: "revival project" at row 5
+  lda #5
+  sta print_y
+  lda #9               ; centered: (32-15)/2 ≈ 8
+  sta print_x
+  lda #title_str2 >> 16
+  sta print_bank
+  ldx #title_str2 & $ffff
+  stx print_src
+  stz print_pal        ; normal palette
+  lda #32
+  sta print_count
+  jsr hiprint
+
+  ; byline: "by DavidAF" at row 6
+  lda #6
+  sta print_y
+  lda #11              ; centered: (32-10)/2 = 11
+  sta print_x
+  lda #title_str3 >> 16
+  sta print_bank
+  ldx #title_str3 & $ffff
+  stx print_src
+  stz print_pal        ; normal palette
+  lda #32
+  sta print_count
+  jsr hiprint
+
+  ; line 1: "WE HAVE BREACHED THE PERIMITER" at row 10
+  lda #10
+  sta print_y
+  lda #3
+  sta print_x
+  lda #emu_str1 >> 16
+  sta print_bank
+  ldx #emu_str1 & $ffff
+  stx print_src
+  lda #1               ; bold palette
+  sta print_pal
+  lda #32
+  sta print_count
+  jsr hiprint
+
+  ; line 2: "No MCU detected" at row 12
+  lda #12
+  sta print_y
+  lda #4
+  sta print_x
+  lda #emu_str2 >> 16
+  sta print_bank
+  ldx #emu_str2 & $ffff
+  stx print_src
+  stz print_pal
+  lda #40
+  sta print_count
+  jsr hiprint
+
+  ; line 3: "sd2snes menu ROM loaded OK" at row 14
+  lda #14
+  sta print_y
+  lda #4
+  sta print_x
+  lda #emu_str3 >> 16
+  sta print_bank
+  ldx #emu_str3 & $ffff
+  stx print_src
+  stz print_pal
+  lda #40
+  sta print_count
+  jsr hiprint
+
+  ; line 4: "Edit palette.a65 for colors" at row 17
+  lda #17
+  sta print_y
+  lda #4
+  sta print_x
+  lda #emu_str4 >> 16
+  sta print_bank
+  ldx #emu_str4 & $ffff
+  stx print_src
+  stz print_pal
+  lda #40
+  sta print_count
+  jsr hiprint
+
+  ; line 5: "Edit main.a65 for this text" at row 19
+  lda #19
+  sta print_y
+  lda #4
+  sta print_x
+  lda #emu_str5 >> 16
+  sta print_bank
+  ldx #emu_str5 & $ffff
+  stx print_src
+  stz print_pal
+  lda #40
+  sta print_count
+  jsr hiprint
+
+  ; Wait one NMI frame for DMA to transfer text to VRAM
+- lda isr_done
+  lsr
+  bcc -
+  stz isr_done
+  rts
+
+
+; =============================================
+; snes_init - Initialize all PPU and CPU I/O registers
+; Requires: DBR = $00
+; =============================================
+snes_init
+  .databank 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+
+  stz $4200            ; disable NMI, IRQ, auto joypad
+  lda #$ff
+  sta $4201            ; I/O port = all high
+  stz $4202            ; multiplicand
+  stz $4203            ; multiplier
+  stz $4204            ; dividend low
+  stz $4205            ; dividend high
+  stz $4206            ; divisor
+  stz $4207            ; H-count timer low
+  stz $4208            ; H-count timer high
+  stz $4209            ; V-count timer low
+  stz $420a            ; V-count timer high
+  stz $420b            ; DMA enable = none
+  stz $420c            ; HDMA enable = none
+
+  ; Force blank ON (screen off while we set up)
+  lda #$8f
+  sta $2100            ; INIDISP = force blank + max brightness
+
+  ; OBJ settings (match snescom: 8x8+16x16, name=0, base=3)
+  lda #$03
+  sta $2101
+  stz $2102
+  stz $2103
+
+  ; BG mode
+  stz $2105
+  stz $2106
+
+  ; BG tilemap addresses (will be set properly in video_init)
+  stz $2107
+  stz $2108
+  stz $2109
+  stz $210a
+
+  ; BG character base addresses
+  stz $210b
+  stz $210c
+
+  ; Scroll registers
+  stz $210d
+  stz $210d
+  stz $210e
+  stz $210e
+  stz $210f
+  stz $210f
+  lda #$05             ; BG2 V-scroll initial (match snescom)
+  sta $2110
+  stz $2110
+  stz $2111
+  stz $2111
+  stz $2112
+  stz $2112
+  stz $2113
+  stz $2113
+  stz $2114
+  stz $2114
+
+  ; VRAM address mode
+  lda #$80
+  sta $2115            ; VMAIN: increment on high byte write, step +1
+
+  ; Zero VRAM address
+  stz $2116
+  stz $2117
+
+  ; Mode 7 matrix (identity)
+  stz $211a
+  stz $211b
+  lda #$01
+  sta $211b
+  stz $211c
+  stz $211c
+  stz $211d
+  stz $211d
+  stz $211e
+  sta $211e
+  stz $211f
+  stz $211f
+  stz $2120
+  stz $2120
+
+  ; CGRAM address
+  stz $2121
+
+  ; Window settings
+  stz $2123
+  stz $2124
+  stz $2125
+  stz $2126
+  stz $2127
+  stz $2128
+  stz $2129
+  stz $212a
+  stz $212b
+
+  ; Main/sub screen designation
+  stz $212c
+  stz $212d
+  stz $212e
+  stz $212f
+
+  ; Color math
+  lda #$30
+  sta $2130
+  stz $2131
+  lda #$e0
+  sta $2132            ; fixed color = black
+  stz $2133            ; SETINI = normal
+
+  rts
+
+
+; =============================================
+; waitblank - Wait for VBlank (poll $4212)
+; Requires: DBR = $00
+; =============================================
+waitblank
+  .databank 0
+  sep #$20
+  .as
+  ; Wait for NOT in VBlank first
+- lda $4212
+  and #$80
+  bne -
+  ; Now wait for VBlank to start
+- lda $4212
+  and #$80
+  beq -
+  rts
+
+
+; =============================================
+; clear_vram - Zero all 64KB of VRAM using DMA
+; Requires: DBR = $00, force blank must be on
+; =============================================
+clear_vram
+  .databank 0
+  sep #$20
+  .as
+
+  lda #$80
+  sta $2115            ; VMAIN: increment after high byte write
+  stz $2116            ; VMADD low = 0
+  stz $2117            ; VMADD high = 0
+
+  ; DMA channel 7: fixed source → VRAM ($2118/$2119)
+  DMA7 $09, zero, $18, 0  ; size=0 → 65536 bytes
+
+  rts
+
+
+; =============================================
+; clear_cgram - Zero all 512 bytes of CGRAM
+; Requires: DBR = $00, force blank must be on
+; =============================================
+clear_cgram
+  .databank 0
+  sep #$20
+  .as
+
+  stz $2121            ; CGADD = 0
+
+  ; DMA channel 7: fixed source → CGRAM ($2122)
+  DMA7 $08, zero, $22, $0200  ; 512 bytes
+
+  rts
+
+
+; =============================================
+; Include additional source files
+; =============================================
+.include "ui.a65"
+.include "dma.a65"
+.include "font.a65"
+.include "palette.a65"
+.include "const.a65"
+.include "reset.a65"
+.include "header.a65"
+
+; =============================================
+; Pad ROM to exactly 64KB
+; =============================================
+.if * < $C10000
+  .fill $C10000 - *, $00
+.endif

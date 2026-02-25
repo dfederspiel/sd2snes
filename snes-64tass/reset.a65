@@ -1,0 +1,144 @@
+; reset.a65 - NMI and IRQ handlers (64tass Milestone 2)
+; NMI fires every VBlank (~60Hz). Handles:
+; 1. DMA tile buffers WRAM → VRAM (for hiprint text)
+; 2. Cursor bar positioning (selection highlight)
+; 3. Brightness fading (cur_bright toward tgt_bright)
+; 4. Sets isr_done = 1
+
+; =============================================
+; NMI_ROUTINE - VBlank interrupt handler
+; Called via header.a65 NMI wrapper (regs already saved)
+; =============================================
+.databank ?              ; DBR unknown on NMI entry
+
+NMI_ROUTINE
+  sep #$20
+  .as
+  rep #$10
+  .xl
+
+  ; Set DBR = $00 for register access ($21xx, $42xx, $43xx)
+  lda #$00
+  pha
+  plb
+  .databank 0
+
+  ; --- DMA tile buffers to VRAM ---
+  ; screen_dma_disable is in WRAM; with .databank 0, accessing
+  ; $0027 reads from $00:0027 (WRAM mirror of $7E:0027)
+  lda screen_dma_disable
+  bne _nmi_skip_dma
+
+  ; Set VMAIN for word-access, increment on high byte write
+  lda #$80
+  sta $2115
+
+  ; DMA BG1 tile buffer → VRAM
+  ldx #BG1_TILE_BASE
+  stx $2116
+  DMA7 $01, BG1_TILE_BUF, $18, $1000
+
+  ; DMA BG2 tile buffer → VRAM
+  ldx #BG2_TILE_BASE
+  stx $2116
+  DMA7 $01, BG2_TILE_BUF, $18, $1000
+
+_nmi_skip_dma
+
+  ; --- Cursor bar positioning ---
+  ; Convert logical bar position to physical scanline for HDMA math table
+  lda bar_yl             ; WRAM mirror access ($00:0022)
+  dec a
+  asl
+  asl
+  asl
+  sta bar_y              ; physical pos = logical pos * 8 - 8
+  cmp #224
+  bne +
+  lda #1
++ sta bar_y
+  cmp #113
+  bcs _nmi_lower_half
+
+  ; Upper half: bar_y scanlines before the selection bar starts
+  sta hdma_math          ; WRAM mirror ($00:0242)
+  lda #$01
+  sta hdma_math+3
+  bra _nmi_math_cont
+
+_nmi_lower_half
+  ; Lower half: split across two HDMA entries
+  sbc #111               ; carry set from bcs
+  sta hdma_math+3
+  lda #112
+  sta hdma_math
+
+_nmi_math_cont
+  ; Cursor bar pixel position for window registers
+  lda bar_wl
+  beq _nmi_bar_hidden    ; bar_wl=0 → no selection bar, disable window
+  lda bar_xl
+  asl
+  dec a
+  asl
+  sta bar_x              ; physical pos = logical pos * 4 - 2
+  sta $2126              ; window 1 left
+  lda bar_wl
+  asl
+  asl
+  inc a
+  sta bar_w              ; pixel width = logical width * 4 + 1
+  clc
+  adc bar_x
+  sta $2127              ; window 1 right
+  bra _nmi_bar_done
+
+_nmi_bar_hidden
+  ; Disable window: set left > right so nothing passes
+  lda #$01
+  sta $2126              ; window 1 left = 1
+  stz $2127              ; window 1 right = 0 (left > right = empty)
+
+_nmi_bar_done
+
+  ; --- Brightness fading ---
+  ; fade_count counts up; when it matches fade_speed, step brightness
+  lda fade_count         ; WRAM mirror ($00:0034)
+  cmp fade_speed         ; WRAM mirror ($00:0033)
+  bne _nmi_no_fade
+  stz fade_count         ; reset counter
+
+  lda cur_bright
+  cmp tgt_bright
+  beq _nmi_no_fade
+  bpl _nmi_bright_down
+
+  ; Fade up
+  inc a
+  sta cur_bright
+  sta $2100
+  bra _nmi_no_fade
+
+_nmi_bright_down
+  dec a
+  sta cur_bright
+  sta $2100
+
+_nmi_no_fade
+  lda fade_count
+  inc a
+  sta fade_count
+
+  ; --- Signal NMI completion ---
+  lda #$01
+  sta isr_done           ; WRAM mirror ($00:0020)
+  rtl
+
+; =============================================
+; IRQ_ROUTINE - Hardware IRQ handler
+; =============================================
+IRQ_ROUTINE
+  sep #$20
+  .as
+  lda $4211              ; acknowledge IRQ
+  rtl

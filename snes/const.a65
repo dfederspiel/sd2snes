@@ -5,41 +5,41 @@ zero            .word  0
 bg2tile         .byt $20
 hdma_pal_src
   .byt 44
-  .byt $60, $2d
+  .byt $94, $30       ; bright pink R=20,G=4,B=12 (logo area)
   .byt 10
-  .byt $00, $00
+  .byt $00, $00       ; black (transition)
   .byt 2
-  .byt $60, $2d
+  .byt $94, $30       ; bright pink
   .byt 11
-  .byt $00, $00
+  .byt $00, $00       ; black (gradient start)
   .byt 11
-  .byt $20, $04
+  .byt $02, $04       ; R=2,G=0,B=1 (very dark pink)
   .byt 11
-  .byt $40, $08
+  .byt $24, $08       ; R=4,G=1,B=2
   .byt 11
-  .byt $60, $0c
+  .byt $26, $0c       ; R=6,G=1,B=3
   .byt 11
-  .byt $80, $10
+  .byt $48, $10       ; R=8,G=2,B=4
   .byt 11
-  .byt $a0, $14
+  .byt $4a, $14       ; R=10,G=2,B=5
   .byt 11
-  .byt $c0, $18
+  .byt $6c, $18       ; R=12,G=3,B=6
   .byt 11
-  .byt $e0, $1c
+  .byt $6e, $1c       ; R=14,G=3,B=7
   .byt 11
-  .byt $00, $21
+  .byt $90, $20       ; R=16,G=4,B=8
   .byt 11
-  .byt $20, $25
+  .byt $92, $24       ; R=18,G=4,B=9
   .byt 11
-  .byt $40, $29
+  .byt $b4, $28       ; R=20,G=5,B=10 (near-bright)
   .byt 27
-  .byt $60, $2d
+  .byt $94, $30       ; bright pink (bottom)
   .byt 2
-  .byt $20, $04
+  .byt $02, $04       ; very dark pink
   .byt 11
-  .byt $60, $2d
+  .byt $94, $30       ; bright pink
   .byt 1
-  .byt $20, $04
+  .byt $02, $04       ; very dark pink
   .byt $00
 
 hdma_cg_addr_src
@@ -96,19 +96,19 @@ hdma_bg2scroll_src
   .byt $0f, $00
   .byt 0
 
-; colors:
-; upper border: + #547fff -> 10,15,31
-; selection bar:+ #5400ff -> 10,0,31
-; lower border: 1/2 #5400ff
+; colors: (pink theme)
+; upper border: + R=31,G=8,B=16 (warm pink)
+; selection bar:+ R=31,G=0,B=16 (hot pink)
+; lower border: 1/2 of above
 hdma_math_src
   .byt 1 ; these are filled in...
-  .byt $00, $2a
+  .byt $00, $3f       ; R=31 (COLDATA: red channel, intensity 31)
   .byt 1 ; ...to move the color bar
-  .byt $00, $4f
+  .byt $00, $48       ; G=8  (COLDATA: green channel, intensity 8)
   .byt 1
-  .byt $33, $9f
+  .byt $33, $90       ; sub half, B=16 (COLDATA: blue channel, intensity 16)
   .byt 7
-  .byt $33, $40
+  .byt $33, $40       ; sub half, G=0
   .byt 1
   .byt $73, $00
   .byt 1
@@ -116,8 +116,8 @@ hdma_math_src
   .byt 0
 
 hdma_bar_color_src
-  .byt $2a, $4f, $9f, $40 ; normal color
-  .byt $36, $4f, $8a, $40 ; highlight color (active editing)
+  .byt $3f, $48, $90, $40 ; normal color (pink: R=31,G=8,B=16)
+  .byt $3f, $4c, $8c, $40 ; highlight color (warm pink: R=31,G=12,B=12)
 
 oam_data_l
   .byt 88, 56, 0, $08
