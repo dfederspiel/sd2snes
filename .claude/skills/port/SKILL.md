@@ -25,6 +25,8 @@ Use this when translating code from `snes/` (snescom) to `snes-64tass/` (64tass)
 | `rep #$10 : .xl` | `rep #$10` newline `.xl` | No `:` chaining |
 | `- bra -` | `- bra -` | Same (anonymous labels work) |
 | `jmp @label` | `jml label` | Long jump (or auto if cross-bank) |
+| `inc` (accumulator) | `inc a` | 64tass requires explicit `a` operand |
+| `dec` (accumulator) | `dec a` | 64tass requires explicit `a` operand |
 
 ## Include Model
 
@@ -35,8 +37,14 @@ snescom uses a separate linker step (sneslink). 64tass is single-pass with `.inc
 .cpu "65816"
 .include "memmap.i65"      ; constants
 .include "dma.i65"         ; macros
+.include "data.i65"        ; WRAM variable addresses
 * = $C00000                ; ROM start
 ; ... code ...
+.include "ui.a65"          ; text renderer
+.include "dma.a65"         ; HDMA setup
+.include "font.a65"        ; font tile data
+.include "palette.a65"     ; BGR555 palette
+.include "const.a65"       ; HDMA tables, strings
 .include "reset.a65"       ; NMI/IRQ handlers
 .include "header.a65"      ; ROM header + vectors at $FFB0-$FFFF
 .fill $C10000 - *, $00     ; pad to 64KB
@@ -91,19 +99,38 @@ GAME_MAIN
 
 ### NMI Handler — Long Addressing
 
-NMI fires with unknown DBR. Use `.databank ?` and long addressing for WRAM writes:
+NMI fires with unknown DBR. Two strategies:
 
+**Strategy A** — Set DBR=$00 for register access, use long addressing for WRAM:
 ```asm
 .databank ?
 NMI_ROUTINE
   sep #$20
   .as
+  lda #$00
+  pha
+  plb
+  .databank 0
+  sta $2115             ; PPU register — absolute (bank $00)
+  lda $7E0025           ; WRAM variable — long addressing (auto-selected)
   lda #$01
-  sta $7E0027           ; long addressing (opcode $8F), works with any DBR
+  sta $7E0020           ; long store to WRAM
   rtl
 ```
 
-Note: `stz` has NO long addressing mode. In NMI, use `lda #0 / sta $7Exxxx` instead.
+Note: `stz` has NO long addressing mode. In NMI with `.databank 0`, use `lda #0 / sta $7Exxxx` instead.
+
+**Strategy B** — Set DBR=$7E, use long addressing for registers:
+```asm
+  lda #$7e
+  pha
+  plb
+  .databank $7e
+  lda isr_done          ; absolute — assembler picks $0020
+  sta $002100           ; long addressing for PPU register
+```
+
+Our NMI uses Strategy A (DBR=$00) since there are more register writes than WRAM writes.
 
 ## Macro Conversion
 
@@ -165,8 +192,26 @@ When porting a file from `snes/foo.a65` to `snes-64tass/foo.a65`:
 9. Build and fix any remaining errors
 10. Compare behavior in bsnes against snescom version
 
-## Files Already Ported (Milestone 1)
+## Porting Gotchas (Lessons Learned)
 
+### WRAM buffer labels are already 24-bit
+Labels like `BG1_TILE_BUF = $7EB000` in memmap.i65 are full addresses. Do NOT add `$7E0000 +` when using them as DMA source. `DMA7 $01, BG1_TILE_BUF, $18, $1000` is correct.
+
+### OAM must be moved off-screen, not just cleared
+DMA-clearing OAM to zeros puts 128 sprites at position (0,0) with tile 0 — they're visible! Either disable the OBJ layer (`$212C`/`$212D` = `$03` instead of `$13`) or set all sprite Y coordinates to $F0+ (off-screen).
+
+### Color math window needs explicit disable
+When the selection bar is hidden (bar_wl=0), the NMI's bar position math produces a small window at the screen edge. Add a check: if bar_wl=0, set window left > right ($2126=1, $2127=0) to disable the window entirely.
+
+### WRAM variable area must be cleared
+Low WRAM ($7E:0000-$7E:00FF) must be DMA-cleared at boot. Uninitialized bar_xl/bar_wl produce visible color math artifacts. But do NOT clear past $7E:00FF — the stack lives at $1FFF and clearing it inside a JSR wipes the return address (black screen).
+
+### VRAM must be explicitly cleared
+Unlike snescom which may have implicit clearing, 64tass builds need explicit DMA fills to zero VRAM regions. Random tile data renders as garbage characters.
+
+## Port Status
+
+### Milestone 1 — Boot to screen (COMPLETE)
 | File | Status | Notes |
 |------|--------|-------|
 | memmap.i65 | Done | 177 constants converted |
@@ -175,16 +220,29 @@ When porting a file from `snes/foo.a65` to `snes-64tass/foo.a65`:
 | reset.a65 | Done | Minimal NMI stub, `.databank ?` |
 | main.a65 | Done | Boot, snes_init, VRAM/CGRAM clear |
 
-## Files To Port (Milestones 2-3)
+### Milestone 2 — Gradient + text (COMPLETE)
+| File | Status | Notes |
+|------|--------|-------|
+| data.i65 | Done | WRAM variable addresses as `$7E`-prefixed constants |
+| ui.a65 | Done | hiprint Mode 5 text renderer, `.databank $7e` |
+| dma.a65 | Done | HDMA setup (6 channels), killdma |
+| font.a65 | Done | 4096 bytes 2bpp tile data (`.byt` → `.byte`) |
+| palette.a65 | Done | 512 bytes BGR555 palette |
+| const.a65 | Done | HDMA tables, gradient, strings |
+| reset.a65 | Expanded | Full NMI: tile DMA, bar positioning, brightness fade |
+| main.a65 | Expanded | setup_gfx, genfonts, video_init, poc_display, emu_mode |
 
+### Milestone 3 — Input + sprites (NEXT)
 | File | Priority | Key challenges |
 |------|----------|----------------|
-| ui.a65 | M2 | hiprint uses print_* WRAM vars |
-| font.a65 | M2 | Large data block, `.byt` → `.byte` |
-| palette.a65 | M2 | Simple data, easy port |
-| dma.a65 | M2 | HDMA setup, 6 channels |
-| const.a65 | M2 | HDMA tables, string data |
-| pad.a65 | M2 | Joypad reading |
-| filesel.a65 | M3 | MCU communication, complex logic |
-| menu.a65 | M3 | Menu system, heavy WRAM use |
-| data.a65 | M3 | Variable declarations |
+| pad.a65 | High | Joypad reading — enables interaction |
+| logo.a65 | Medium | Logo tile data — or create new sprite graphics |
+| OAM/sprites | Medium | OAM init, sprite tile loading, position control |
+| filesel.a65 | Low | MCU communication — only useful on real hardware |
+| menu.a65 | Low | Menu system — depends on filesel |
+
+**Milestone 3 goals**:
+- Joypad input (d-pad, buttons) with edge detection
+- Basic sprite rendering (load tiles, set OAM entries, enable OBJ layer)
+- Controllable sprite as a learning exercise
+- Selection bar movement driven by joypad (cursor navigation)

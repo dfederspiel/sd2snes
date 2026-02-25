@@ -32,7 +32,7 @@ Build the menu ROM and launch it in bsnes-plus for visual verification.
 
 5. Tell the user what to expect:
    - Emulator mode activates (MCU doesn't respond with $55)
-   - Pink gradient background and emulator mode text should be visible
+   - Pink gradient background with logo graphic and emulator mode text
    - NMI handler maintains display at 60fps
 
 ## 64tass Test
@@ -53,8 +53,16 @@ Build the menu ROM and launch it in bsnes-plus for visual verification.
 
 5. Tell the user what to expect based on current milestone:
    - **Milestone 1**: Solid dark blue/purple screen (backdrop color only, no BG layers)
-   - **Milestone 2** (future): Pink gradient, text rendering via hiprint
-   - **Milestone 3** (future): Full menu with file browser
+   - **Milestone 2** (current): Pink HDMA gradient background filling the screen. "S A T E L L A V I E W" title in yellow bold text in the pink header area, "revival project" subtitle, "by DavidAF" byline. Below: "WE HAVE BREACHED THE PERIMITER" in bold, followed by emulator info lines. No logo graphic, no sprites. Clean screen with no artifacts.
+   - **Milestone 3** (next): Joypad input, sprites, selection bar movement
 
-## Emulator mode behavior (snescom)
+## Emulator mode behavior
+
 Without sd2snes hardware, `wait_mcu_ready` times out after ~65536 polls, SNES_CMD != $55, so `emu_mode` runs. This renders text via hiprint then enters an infinite NMI-driven display loop.
+
+## Common visual issues to check
+
+- **Hot pink smudge at screen edge**: Color math window not disabled when bar_wl=0. Fix in reset.a65 NMI: check bar_wl, set $2126=1/$2127=0 when zero.
+- **Stray sprite in corner**: OAM cleared to zeros = sprites at (0,0). Either disable OBJ layer ($212C/$212D = $03) or set sprite Y coords to $F0.
+- **No text visible**: NMI DMA source address wrong. BG tile buf labels in memmap.i65 are already $7E-prefixed — don't double-add bank.
+- **Garbled characters in top area**: Text rendered in Mode 3 region. hiprint produces Mode 5 tile entries — ensure HDMA mode switch puts Mode 5 early enough.
