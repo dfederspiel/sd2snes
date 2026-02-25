@@ -1,0 +1,46 @@
+;; Screen template for sd2snes menu ROM
+;; Replace SCREENNAME with your screen name
+;; Add strings and customize the display
+
+SCREENNAME_display:
+  sep #$20 : .as       ; 8-bit accumulator
+  rep #$10 : .xl       ; 16-bit index registers
+
+  ;; --- Line 1: Title (bold) at row 10, column 2 ---
+  lda #10
+  sta print_y
+  lda #2
+  sta print_x
+  lda #^SCREENNAME_title
+  sta print_bank
+  ldx #!SCREENNAME_title
+  stx print_src
+  lda #1                ; palette 1 = bold/highlight
+  sta print_pal
+  lda #32               ; max characters
+  sta print_count
+  jsr hiprint
+
+  ;; --- Line 2: Description at row 12, column 0 ---
+  lda #12
+  sta print_y
+  stz print_x
+  lda #^SCREENNAME_desc
+  sta print_bank
+  ldx #!SCREENNAME_desc
+  stx print_src
+  stz print_pal         ; palette 0 = normal
+  lda #40
+  sta print_count
+  jsr hiprint
+
+  ;; --- Wait one frame for NMI to DMA text to VRAM ---
+- lda isr_done
+  lsr
+  bcc -
+  stz isr_done
+  rts
+
+;; --- String data ---
+SCREENNAME_title  .byt "YOUR TITLE HERE", 0
+SCREENNAME_desc   .byt "Description text goes here", 0

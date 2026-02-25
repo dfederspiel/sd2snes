@@ -1,0 +1,16 @@
+; reset.a65 - Minimal NMI and IRQ handlers (64tass Milestone 1)
+; Full NMI handler (HDMA, brightness fading) will come in Milestone 2
+
+.databank ?    ; NMI can fire with any data bank register value
+
+NMI_ROUTINE
+  ; Minimal NMI: just set isr_done flag and return
+  sep #$20
+  .as
+  lda #$01
+  sta $7E0027          ; long addressing (STA long, opcode $8F)
+  rtl
+
+IRQ_ROUTINE
+  ; Minimal IRQ: do nothing
+  rtl

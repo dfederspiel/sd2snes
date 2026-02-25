@@ -55,7 +55,9 @@ GAME_MAIN:
   jsr detect_ultra16
   jsr detect_satellaview
   lda @CFG_BRIGHTNESS_LIMIT
-  sta cur_bright
+  bne +
+  lda #$0f      ; emulator fallback
++ sta cur_bright
   sta tgt_bright
   sta $2100
   jmp @set_bank ; Set bios bank, just to be sure
@@ -84,6 +86,12 @@ coldboot:       ; Regular, cold-start init
   jsr detect_satellaview
   jsr screen_on
   jsr wait_mcu_ready
+  ; check if MCU responded - if not, we're in emulator mode
+  sep #$20 : .as
+  lda @SNES_CMD
+  cmp #$55
+  bne emu_mode
+  ; --- normal MCU path ---
   jsr filesel_init
   sep #$20 : .as
   lda @ST_RTC_VALID
@@ -94,6 +102,100 @@ coldboot:       ; Regular, cold-start init
   sei
   stz $4200
   jmp @infloop  ; infinite loop in WRAM
+
+emu_mode:
+  ; --- emulator mode: no MCU, show POC display ---
+  ; force screen on with known-good brightness
+  lda #$0f
+  sta cur_bright
+  sta tgt_bright
+  sta bright_limit
+  sta $2100
+  jsr poc_display
+- lda isr_done
+  lsr
+  bcc -
+  stz isr_done
+  bra -
+
+poc_display:
+  sep #$20 : .as
+  rep #$10 : .xl
+  ; render text lines using hiprint
+  ; line 1: "EMULATOR MODE" at row 10
+  lda #10
+  sta print_y
+  lda #3
+  sta print_x
+  lda #^emu_str1
+  sta print_bank
+  ldx #!emu_str1
+  stx print_src
+  lda #1
+  sta print_pal
+  lda #32
+  sta print_count
+  jsr hiprint
+  ; line 2: "No MCU detected" at row 12
+  lda #12
+  sta print_y
+  stz print_x
+  lda #^emu_str2
+  sta print_bank
+  ldx #!emu_str2
+  stx print_src
+  stz print_pal
+  lda #40
+  sta print_count
+  jsr hiprint
+  ; line 3: "sd2snes menu ROM loaded OK" at row 14
+  lda #14
+  sta print_y
+  stz print_x
+  lda #^emu_str3
+  sta print_bank
+  ldx #!emu_str3
+  stx print_src
+  stz print_pal
+  lda #40
+  sta print_count
+  jsr hiprint
+  ; line 4: "Edit palette.a65 for colors" at row 17
+  lda #17
+  sta print_y
+  stz print_x
+  lda #^emu_str4
+  sta print_bank
+  ldx #!emu_str4
+  stx print_src
+  stz print_pal
+  lda #40
+  sta print_count
+  jsr hiprint
+  ; line 5: "Edit main.a65 for this text" at row 19
+  lda #19
+  sta print_y
+  stz print_x
+  lda #^emu_str5
+  sta print_bank
+  ldx #!emu_str5
+  stx print_src
+  stz print_pal
+  lda #40
+  sta print_count
+  jsr hiprint
+  ; wait one frame for NMI to DMA our text to VRAM
+- lda isr_done
+  lsr
+  bcc -
+  stz isr_done
+  rts
+
+emu_str1  .byt "WE HAVE BREACHED THE PERIMITER", 0
+emu_str2  .byt "No MCU detected", 0
+emu_str3  .byt "sd2snes menu ROM loaded OK", 0
+emu_str4  .byt "Edit palette.a65 for colors", 0
+emu_str5  .byt "Edit main.a65 for this text", 0
 
 colortest:
   sep #$20 : .as
@@ -315,8 +417,12 @@ video_init:
 screen_on:
   stz $2100     ; screen on, 0% brightness
   lda @CFG_BRIGHTNESS_LIMIT
-  sta tgt_bright
+  bne +
+  lda #$0f      ; emulator fallback: max brightness
++ sta tgt_bright
   sta bright_limit
+  sta cur_bright
+  sta $2100     ; set brightness immediately
   rts
 
 snes_init:
@@ -637,10 +743,14 @@ wait_mcu_ready:
   sep #$20 : .as
   lda #$00
   sta @MCU_CMD
+  rep #$10 : .xl
+  ldx #$0000    ; timeout counter for emulator
 - lda @SNES_CMD
   cmp #$55
-  bne -
-  plp
+  beq +
+  dex
+  bne -         ; try ~65536 times then give up
++ plp
   rts
 
 clear_wram:

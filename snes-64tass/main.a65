@@ -1,0 +1,282 @@
+; main.a65 - sd2snes menu ROM entry point (64tass Milestone 1)
+; Minimal boot: init SNES, set a background color, turn screen on
+; Tests: CPU mode, HiROM banking, PPU registers, NMI, basic display
+
+.cpu "65816"
+
+; --- Include constants and macros ---
+.include "memmap.i65"
+.include "dma.i65"
+
+; =============================================
+; Code starts at $C00000 (HiROM bank $C0)
+; =============================================
+* = $C00000
+
+; Reserve space for nmihook pointer (matches original layout)
+.word 0               ; nmihook placeholder
+
+; =============================================
+; GAME_MAIN - Entry point from RESET
+; =============================================
+GAME_MAIN
+  sep #$20
+  .as
+  .databank 0          ; DBR = $00 after RESET (set by header.a65)
+
+  stz $4200            ; inhibit VBlank NMI
+  lda #$01
+  sta $420d            ; enable FastROM
+
+  ; --- Initialize SNES hardware ---
+  ; All PPU ($21xx) and CPU ($42xx) register access needs DBR=$00
+  ; because these registers only exist in banks $00-$3F
+  jsr snes_init
+  jsr clear_vram
+  jsr clear_cgram
+  jsr waitblank
+
+  ; --- Set a background color via CGRAM ---
+  ; Dark purple: R=2, G=0, B=8 → BGR555 = $2002
+  stz $2121            ; CGADD = color 0
+  lda #$02             ; low byte: gggrrrrr = 00000010 (R=2, G=0)
+  sta $2122            ; CGDATA low
+  lda #$20             ; high byte: 0bbbbbgg = 00100000 (B=8, G=0)
+  sta $2122            ; CGDATA high
+
+  ; --- Enable NMI ---
+  lda #$81             ; NMI enable + auto joypad read
+  sta $4200
+
+  ; --- Turn screen on ---
+  lda #$0f             ; full brightness
+  sta $2100
+
+  ; --- Switch data bank to $7E for WRAM variable access ---
+  lda #$7e
+  pha
+  plb
+  .databank $7e
+
+  stz isr_done
+
+  ; --- Main loop: wait for NMI each frame ---
+mainloop
+- lda isr_done
+  lsr
+  bcc -
+  stz isr_done
+  bra mainloop
+
+; =============================================
+; snes_init - Initialize all PPU registers
+; Requires: DBR = $00 (caller must ensure this)
+; =============================================
+snes_init
+  .databank 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  stz $4200            ; disable NMI, IRQ, auto joypad
+  lda #$ff
+  sta $4201            ; I/O port = all high
+  stz $4202            ; multiplicand
+  stz $4203            ; multiplier
+  stz $4204            ; dividend low
+  stz $4205            ; dividend high
+  stz $4206            ; divisor
+  stz $4207            ; H-count timer low
+  stz $4208            ; H-count timer high
+  stz $4209            ; V-count timer low
+  stz $420a            ; V-count timer high
+  stz $420b            ; DMA enable = none
+  stz $420c            ; HDMA enable = none
+
+  ; Force blank ON (screen off while we set up)
+  lda #$8f
+  sta $2100            ; INIDISP = force blank + max brightness
+
+  ; OBJ settings
+  stz $2101            ; OBSEL = 8x8/16x16, base 0
+
+  ; BG mode
+  lda #$03             ; Mode 3, 8x8 tiles
+  sta $2105
+
+  ; BG tilemap addresses
+  lda #(BG1_TILE_BASE >> 8) & $fc  ; BG1 tilemap
+  sta $2107
+  lda #(BG2_TILE_BASE >> 8) & $fc  ; BG2 tilemap
+  sta $2108
+  stz $2109            ; BG3
+  stz $210a            ; BG4
+
+  ; BG character base addresses
+  stz $210b            ; BG1/BG2 chr base = 0
+  stz $210c            ; BG3/BG4 chr base = 0
+
+  ; Scroll registers (all zero)
+  stz $210d            ; BG1 H-scroll
+  stz $210d
+  stz $210e            ; BG1 V-scroll
+  stz $210e
+  stz $210f            ; BG2 H-scroll
+  stz $210f
+  stz $2110            ; BG2 V-scroll
+  stz $2110
+  stz $2111            ; BG3 H-scroll
+  stz $2111
+  stz $2112            ; BG3 V-scroll
+  stz $2112
+  stz $2113            ; BG4 H-scroll
+  stz $2113
+  stz $2114            ; BG4 V-scroll
+  stz $2114
+
+  ; VRAM address mode
+  lda #$80
+  sta $2115            ; VMAIN: increment on high byte write, step +1
+
+  ; Zero VRAM address
+  stz $2116
+  stz $2117
+
+  ; Window settings
+  stz $2123            ; W12SEL
+  stz $2124            ; W34SEL
+  stz $2125            ; WOBJSEL
+  stz $2126            ; WH0
+  stz $2127            ; WH1
+  stz $2128            ; WH2
+  stz $2129            ; WH3
+  stz $212a            ; WBGLOG
+  stz $212b            ; WOBJLOG
+
+  ; Main/sub screen designation
+  stz $212c            ; no layers enabled (Milestone 1: backdrop color only)
+  stz $212d            ; sub screen = none
+  stz $212e            ; TMW (window mask main)
+  stz $212f            ; TSW (window mask sub)
+
+  ; Color math
+  lda #$30             ; fixed color math
+  sta $2130            ; CGWSEL
+  stz $2131            ; CGADSUB
+  lda #$e0             ; fixed color = black (all planes, intensity 0)
+  sta $2132            ; COLDATA
+
+  ; Screen mode (optional further setup)
+  stz $2133            ; SETINI = normal
+
+  rts
+
+; =============================================
+; waitblank - Wait for VBlank (poll $4212)
+; Requires: DBR = $00
+; =============================================
+waitblank
+  .databank 0
+  sep #$20
+  .as
+  ; Wait for NOT in VBlank first
+- lda $4212
+  and #$80
+  bne -
+  ; Now wait for VBlank to start
+- lda $4212
+  and #$80
+  beq -
+  rts
+
+; =============================================
+; clear_vram - Zero all 64KB of VRAM using DMA
+; Requires: DBR = $00, force blank must be on
+; =============================================
+clear_vram
+  .databank 0
+  sep #$20
+  .as
+  ; Set VRAM address to 0
+  lda #$80
+  sta $2115            ; VMAIN: increment after high byte write
+  stz $2116            ; VMADD low = 0
+  stz $2117            ; VMADD high = 0
+
+  ; DMA channel 7: fixed source → VRAM ($2118/$2119)
+  lda #$09             ; transfer pattern 1 (write xx,xx+1), fixed source
+  sta $4370            ; DMA7 control
+  lda #$18             ; B-bus destination = $2118 (VMDATAL)
+  sta $4371
+
+  ; Source: point to our zero word at $C00000 (nmihook placeholder = $0000)
+  stz $4372            ; source addr low
+  stz $4373            ; source addr high
+  lda #$c0
+  sta $4374            ; source bank = $C0
+
+  ; Transfer size = 0 → 65536 bytes (all of VRAM)
+  stz $4375            ; size low
+  stz $4376            ; size high
+
+  lda #$80             ; trigger DMA channel 7
+  sta $420b
+  rts
+
+; =============================================
+; clear_cgram - Zero all 512 bytes of CGRAM
+; Requires: DBR = $00, force blank must be on
+; =============================================
+clear_cgram
+  .databank 0
+  sep #$20
+  .as
+  stz $2121            ; CGADD = 0
+
+  ; DMA channel 7: fixed source → CGRAM ($2122)
+  lda #$08             ; transfer pattern 0 (single write), fixed source
+  sta $4370
+  lda #$22             ; B-bus destination = $2122 (CGDATA)
+  sta $4371
+
+  ; Source: zero byte at $C00000
+  stz $4372
+  stz $4373
+  lda #$c0
+  sta $4374
+
+  ; Transfer size = 512 bytes (256 colors × 2 bytes)
+  stz $4375            ; size low = 0
+  lda #$02
+  sta $4376            ; size high = 2 → 512 bytes
+
+  lda #$80
+  sta $420b            ; trigger DMA7
+  rts
+
+; =============================================
+; WRAM variables
+; =============================================
+; These are accessed with DBR=$7E via absolute addressing,
+; or via direct page (which always accesses bank $00 low WRAM mirror).
+; Address $0027 with DBR=$7E → $7E0027 (WRAM)
+; Address $0027 via direct page → $00:0027 (mirrors $7E0027)
+
+isr_done = $0027      ; NMI completion flag (1 byte)
+
+; =============================================
+; Include NMI/IRQ handlers (must be before header which references them)
+; =============================================
+.include "reset.a65"
+
+; =============================================
+; Include ROM header and vectors (at end of bank)
+; =============================================
+.include "header.a65"
+
+; =============================================
+; Pad ROM to exactly 64KB
+; =============================================
+.if * < $C10000
+  .fill $C10000 - *, $00
+.endif
