@@ -183,5 +183,11 @@ Fires every VBlank (~60Hz). DMAs BG1/BG2 tile buffers WRAM->VRAM, updates cursor
 | `$7EF200` | WRAM_WAIT_MCU | MCU wait routine |
 | `$FF019D` | CFG_BRIGHTNESS_LIMIT | Screen brightness config |
 
-For full PPU register reference, see [reference/ppu-registers.md](reference/ppu-registers.md).
-For 65816 addressing modes, see [reference/addressing-modes.md](reference/addressing-modes.md).
+## Detailed References
+
+- [PPU Registers](reference/ppu-registers.md) — All PPU/CPU registers with bit layouts, initial values, BG mode summary (manual-validated)
+- [OBJ/Sprites](reference/obj-sprites.md) — OAM format, size tables, priority rules, per-scanline limits, setup sequence, code examples
+- [BG/Backgrounds](reference/bg-backgrounds.md) — BG modes, tilemap format, CGRAM layout, character data formats, priority ordering, setup sequence
+- [Window Masking](reference/window-mask.md) — Window 1/2 registers, IN/OUT modes, mask logic (OR/AND/XOR/XNOR), color window, setup sequence
+- [DMA & HDMA](reference/dma-hdma.md) — GPDMA bulk transfers, HDMA per-scanline effects, transfer modes, B-bus patterns, table format, channel allocation
+- [65816 Addressing Modes](reference/addressing-modes.md) — All addressing modes with snescom syntax

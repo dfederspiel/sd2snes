@@ -2,7 +2,6 @@
 name: deploy
 description: Build the SNES menu ROM then deploy m3nu.bin to the FXPAK Pro SD card. Backs up the existing file first.
 disable-model-invocation: true
-allowed-tools: Bash
 argument-hint: "[drive-letter]"
 ---
 
