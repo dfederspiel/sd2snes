@@ -1,29 +1,24 @@
 ; dma.i65 - DMA7 macro for sd2snes menu ROM (64tass version)
 ;
-; Usage: #DMA7 mode, len, a_bank, a_addr, b_reg
-;   mode   = DMA transfer mode byte
-;   len    = transfer length (16-bit)
-;   a_bank = source bank byte
-;   a_addr = source address (16-bit)
-;   b_reg  = B-bus register (PPU register low byte)
+; Usage: DMA7 mode, src, dest, size
+;   mode = DMA transfer mode byte ($00=single, $01=word, $08=fixed, $09=fixed+word)
+;   src  = 24-bit source address (bank auto-extracted via >> 16)
+;   dest = B-bus register low byte (e.g., $18 for VMDATAL, $22 for CGDATA)
+;   size = transfer length (16-bit, 0 = 65536)
+;
+; Requires caller to have: sep #$20 (.as), rep #$10 (.xl)
 
-DMA7 .macro mode, len, a_bank, a_addr, b_reg
-  php
-  sep #$20
-  .as
-  rep #$10
-  .xl
+DMA7 .macro mode, src, dest, size
   lda #\mode
   sta $4370
-  ldx #\a_addr
-  lda #\a_bank
-  stx $4372
-  sta $4374
-  ldx #\len
-  stx $4375
-  lda #\b_reg
+  lda #\dest
   sta $4371
+  ldx #\src & $ffff
+  stx $4372
+  lda #\src >> 16
+  sta $4374
+  ldx #\size
+  stx $4375
   lda #$80
   sta $420b
-  plp
-  .endm
+.endm

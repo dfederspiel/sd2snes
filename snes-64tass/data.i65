@@ -1,0 +1,70 @@
+; data.i65 - WRAM variable address constants for 64tass
+;
+; All variables live in WRAM (bank $7E). We use 16-bit addresses
+; because all variables are in the $0000-$02FF range, which is
+; within the bank $00 WRAM mirror ($00:0000-$1FFF = $7E:0000-$1FFF).
+;
+; This means the same address works regardless of .databank:
+;   .databank $7e → sta $0020 accesses $7E:0020 (direct)
+;   .databank 0   → sta $0020 accesses $00:0020 (WRAM mirror)
+;
+; For indirect long [ptr], the CPU reads from DP+offset in bank $00,
+; which also hits the WRAM mirror. So 16-bit addresses Just Work.
+;
+; For DMA to/from WRAM above $1FFF (tile buffers), use $7E0000+addr.
+
+; =============================================
+; Print system ($0000-$001F)
+; =============================================
+print_x     = $0000   ; .word - x coordinate (tile column)
+print_y     = $0002   ; .word - y coordinate (tile row)
+print_src   = $0004   ; .word - source string address (16-bit)
+print_bank  = $0006   ; .byte - source string bank
+print_pal   = $0007   ; .word - palette number for text
+print_temp  = $0009   ; .word - work variable
+print_ptr   = $000B   ; 3 bytes - read pointer (long)
+print_count = $000E   ; .word - max chars to print
+print_done  = $0010   ; .word - chars actually printed
+print_over  = $0012   ; .byte - was string truncated?
+
+; =============================================
+; State flags ($0020-$002F)
+; =============================================
+isr_done           = $0020  ; .byte - NMI completion flag
+bar_xl             = $0021  ; .byte - logical X of select bar
+bar_yl             = $0022  ; .byte - logical Y of select bar
+bar_x              = $0023  ; .byte - pixel X of select bar
+bar_y              = $0024  ; .byte - pixel Y of select bar
+bar_w              = $0025  ; .byte - bar width (pixels)
+bar_wl             = $0026  ; .byte - bar width (logical)
+screen_dma_disable = $0027  ; .word - skip tile DMA when nonzero
+
+; =============================================
+; Brightness ($0030-$003F)
+; =============================================
+tgt_bright   = $0030  ; .byte - target brightness (NMI fades toward)
+cur_bright   = $0031  ; .byte - current brightness
+bright_limit = $0032  ; .byte - max brightness from config
+fade_speed   = $0033  ; .byte - frames between fade steps
+fade_count   = $0034  ; .byte - current fade frame counter
+
+; =============================================
+; Joypad ($0040-$004F)
+; =============================================
+pad1mem  = $0040  ; .word - joypad current state
+pad1trig = $0042  ; .word - joypad edge detection (newly pressed)
+
+; =============================================
+; HDMA tables ($0100-$02FF)
+; Copied from ROM source tables at boot via DMA to WRAM port.
+; HDMA reads from these WRAM copies (bank $00 mirror = bank $7E).
+; =============================================
+hdma_pal              = $0100  ; 55 bytes - gradient BGR555 colors
+hdma_cg_addr          = $0138  ; 227 bytes - CGRAM address (all zeros)
+hdma_mode             = $021B  ; 5 bytes - BG mode switching
+hdma_bg1scroll        = $0220  ; 21 bytes - BG1 horizontal scroll
+hdma_bg2scroll        = $0235  ; 13 bytes - BG2 vertical scroll
+hdma_math             = $0242  ; 6 bytes - color math initial
+hdma_math_upperborder = $0248  ; 3 bytes - selection bar upper border
+hdma_math_selection   = $024B  ; 3 bytes - selection bar highlight
+hdma_math_lowerborder = $024E  ; 10 bytes - selection bar lower border

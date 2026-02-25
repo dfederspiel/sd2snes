@@ -142,3 +142,6 @@ verilog/*/incremental_db
 obj/
 snes/menu.rtc
 snes/menu.srm
+snes-64tass/menu.rtc
+snes-64tass/menu.srm
+**/.dep/

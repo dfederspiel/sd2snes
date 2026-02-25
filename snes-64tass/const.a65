@@ -1,0 +1,171 @@
+; const.a65 - HDMA source tables, constants, and strings (64tass)
+; These ROM tables are DMA'd to WRAM at boot so HDMA can read
+; from stable RAM even when the cartridge bus is unavailable.
+
+zero            .word 0
+
+; =============================================
+; HDMA palette gradient source (channels 1+2)
+; Format: scanline_count, low_byte, high_byte (BGR555)
+; Terminated by $00
+; =============================================
+hdma_pal_src
+  .byte 44
+  .byte $94, $30       ; bright pink R=20,G=4,B=12 (logo area)
+  .byte 10
+  .byte $00, $00       ; black (transition)
+  .byte 2
+  .byte $94, $30       ; bright pink
+  .byte 11
+  .byte $00, $00       ; black (gradient start)
+  .byte 11
+  .byte $02, $04       ; R=2,G=0,B=1 (very dark pink)
+  .byte 11
+  .byte $24, $08       ; R=4,G=1,B=2
+  .byte 11
+  .byte $26, $0c       ; R=6,G=1,B=3
+  .byte 11
+  .byte $48, $10       ; R=8,G=2,B=4
+  .byte 11
+  .byte $4a, $14       ; R=10,G=2,B=5
+  .byte 11
+  .byte $6c, $18       ; R=12,G=3,B=6
+  .byte 11
+  .byte $6e, $1c       ; R=14,G=3,B=7
+  .byte 11
+  .byte $90, $20       ; R=16,G=4,B=8
+  .byte 11
+  .byte $92, $24       ; R=18,G=4,B=9
+  .byte 11
+  .byte $b4, $28       ; R=20,G=5,B=10 (near-bright)
+  .byte 27
+  .byte $94, $30       ; bright pink (bottom)
+  .byte 2
+  .byte $02, $04       ; very dark pink
+  .byte 11
+  .byte $94, $30       ; bright pink
+  .byte 1
+  .byte $02, $04       ; very dark pink
+  .byte $00
+
+; =============================================
+; HDMA CG address source (channel 1)
+; Always writes 0 to CGADD so channel 2 targets color 0
+; =============================================
+hdma_cg_addr_src
+  .byte $f0
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $f0
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00, $00, $00, $00, $00, $00, $00, $00
+  .byte $00
+
+; =============================================
+; HDMA mode switch source (channel 3)
+; Switches between Mode 3 (top) and Mode 5 (text area)
+; =============================================
+hdma_mode_src   .byte 8, $03, $01, $05, $00
+
+; =============================================
+; HDMA BG1 horizontal scroll source (channel 4)
+; =============================================
+hdma_bg1scroll_src
+  .byte 8
+  .byte $00, $00, $ff, $03
+  .byte 127
+  .byte $fc, $00, $0d, $00
+  .byte 24
+  .byte $fc, $00, $0d, $00
+  .byte 1
+  .byte $fc, $00, $0f, $00
+  .byte $00
+
+; =============================================
+; HDMA BG2 vertical scroll source (channel 0)
+; =============================================
+hdma_bg2scroll_src
+  .byte 8
+  .byte $ff, $03
+  .byte 127
+  .byte $0d, $00
+  .byte 24
+  .byte $0d, $00
+  .byte 1
+  .byte $0f, $00
+  .byte 0
+
+; =============================================
+; HDMA color math source (channel 5)
+; Controls selection bar highlight via COLDATA
+; =============================================
+; colors: (pink theme)
+; upper border: + R=31,G=8,B=16 (warm pink)
+; selection bar:+ R=31,G=0,B=16 (hot pink)
+; lower border: 1/2 of above
+hdma_math_src
+  .byte 1             ; these are filled in...
+  .byte $00, $3f      ; R=31 (COLDATA: red channel, intensity 31)
+  .byte 1             ; ...to move the color bar
+  .byte $00, $48      ; G=8  (COLDATA: green channel, intensity 8)
+  .byte 1
+  .byte $33, $90      ; sub half, B=16 (COLDATA: blue channel, intensity 16)
+  .byte 7
+  .byte $33, $40      ; sub half, G=0
+  .byte 1
+  .byte $73, $00
+  .byte 1
+  .byte $00, $e0
+  .byte 0
+
+hdma_bar_color_src
+  .byte $3f, $48, $90, $40  ; normal color (pink: R=31,G=8,B=16)
+  .byte $3f, $4c, $8c, $40  ; highlight color (warm pink: R=31,G=12,B=12)
+
+; =============================================
+; Title strings (spaced for "larger" feel)
+; =============================================
+title_str1  .text "S A T E L L A V I E W"
+            .byte 0
+title_str2  .text "revival project"
+            .byte 0
+title_str3  .text "by DavidAF"
+            .byte 0
+
+; =============================================
+; Emulator mode strings
+; =============================================
+emu_str1  .text "WE HAVE BREACHED THE PERIMITER"
+          .byte 0
+emu_str2  .text "No MCU detected"
+          .byte 0
+emu_str3  .text "sd2snes menu ROM loaded OK"
+          .byte 0
+emu_str4  .text "Edit palette.a65 for colors"
+          .byte 0
+emu_str5  .text "Edit main.a65 for this text"
+          .byte 0

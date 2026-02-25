@@ -1,12 +1,13 @@
-; main.a65 - sd2snes menu ROM entry point (64tass Milestone 1)
-; Minimal boot: init SNES, set a background color, turn screen on
-; Tests: CPU mode, HiROM banking, PPU registers, NMI, basic display
+; main.a65 - sd2snes menu ROM entry point (64tass Milestone 2)
+; Pink gradient background + hiprint text rendering, no logo bitmap.
+; Always enters emulator mode (MCU detection deferred to Milestone 3).
 
 .cpu "65816"
 
 ; --- Include constants and macros ---
 .include "memmap.i65"
 .include "dma.i65"
+.include "data.i65"
 
 ; =============================================
 ; Code starts at $C00000 (HiROM bank $C0)
@@ -22,43 +23,41 @@
 GAME_MAIN
   sep #$20
   .as
-  .databank 0          ; DBR = $00 after RESET (set by header.a65)
+  .databank 0          ; DBR = $00 after RESET
 
   stz $4200            ; inhibit VBlank NMI
   lda #$01
   sta $420d            ; enable FastROM
 
-  ; --- Initialize SNES hardware ---
-  ; All PPU ($21xx) and CPU ($42xx) register access needs DBR=$00
-  ; because these registers only exist in banks $00-$3F
+  ; --- Cold boot init sequence ---
+  jsr killdma
   jsr snes_init
   jsr clear_vram
   jsr clear_cgram
   jsr waitblank
+  jsr setup_gfx
+  jsr colortest
+  jsr video_init
+  jsr setup_hdma
 
-  ; --- Set a background color via CGRAM ---
-  ; Dark purple: R=2, G=0, B=8 → BGR555 = $2002
-  stz $2121            ; CGADD = color 0
-  lda #$02             ; low byte: gggrrrrr = 00000010 (R=2, G=0)
-  sta $2122            ; CGDATA low
-  lda #$20             ; high byte: 0bbbbbgg = 00100000 (B=8, G=0)
-  sta $2122            ; CGDATA high
+  ; --- Screen on (emulator: always max brightness) ---
+  jsr screen_on
 
-  ; --- Enable NMI ---
-  lda #$81             ; NMI enable + auto joypad read
-  sta $4200
+  ; --- Emulator mode: show POC display ---
+  ; (MCU detection deferred to Milestone 3)
+  lda #$0f
+  sta cur_bright       ; WRAM mirror ($00:0031)
+  sta tgt_bright       ; WRAM mirror ($00:0030)
+  sta bright_limit     ; WRAM mirror ($00:0032)
+  sta $2100            ; force brightness now
 
-  ; --- Turn screen on ---
-  lda #$0f             ; full brightness
-  sta $2100
+  jsr poc_display
 
   ; --- Switch data bank to $7E for WRAM variable access ---
   lda #$7e
   pha
   plb
   .databank $7e
-
-  stz isr_done
 
   ; --- Main loop: wait for NMI each frame ---
 mainloop
@@ -68,9 +67,430 @@ mainloop
   stz isr_done
   bra mainloop
 
+
 ; =============================================
-; snes_init - Initialize all PPU registers
-; Requires: DBR = $00 (caller must ensure this)
+; colortest - Clear color window settings
+; =============================================
+colortest
+  .databank 0
+  sep #$20
+  .as
+  stz $2130
+  rts
+
+; =============================================
+; setup_gfx - Load fonts, palette, HDMA tables
+; Requires: DBR=$00, force blank on
+; =============================================
+setup_gfx
+  .databank 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+
+  stz $4200            ; disable NMI during setup
+  stz $420b            ; disable DMA
+  stz $420c            ; disable HDMA
+
+  ; --- Clear WRAM variable area ($7E:0000-$7E:00FF) ---
+  ; Only clear the variable/state area. Stack lives at $1FFF downward,
+  ; so we must NOT DMA-clear all of low WRAM while inside a JSR.
+  ; HDMA tables ($0100+) are overwritten by ROM→WRAM copies below.
+  ldx #$0000
+  stx $2181
+  lda #$00
+  sta $2183            ; bank $7E (bit 0 = 0)
+  DMA7 $08, zero, $80, $0100  ; clear 256 bytes ($0000-$00FF)
+
+  ; --- Clear WRAM tile buffer area ($7E:8000-$7E:FFFF) ---
+  ldx #$8000
+  stx $2181
+  lda #$00
+  sta $2183
+  DMA7 $08, zero, $80, $8000
+
+  ; --- Generate fonts in VRAM ---
+  jsr genfonts
+
+  ; --- Clear BG1 tilemap in VRAM ---
+  ldx #BG1_TILE_BASE
+  stx $2116
+  DMA7 $09, zero, $18, $1000  ; zero fill 4096 bytes
+
+  ; --- Clear BG2 tilemap in VRAM ---
+  ldx #BG2_TILE_BASE
+  stx $2116
+  DMA7 $09, zero, $18, $1000
+
+  ; --- Clear OAM tables ---
+  ldx #$0000
+  stx $2102
+  DMA7 $08, zero, $04, $0220  ; 544 bytes OAM
+
+  ; --- (No logo — skip logo tile copy, tilemap, sprites) ---
+
+  ; --- Load palette via DMA to CGRAM ---
+  stz $2121            ; CGADD = color 0
+  DMA7 $00, palette, $22, $0200  ; 512 bytes → $2122
+
+  ; --- Copy HDMA source tables from ROM to WRAM ---
+  ; Use WRAM port ($2180) for destination.
+  ; Palette gradient
+  lda #hdma_pal >> 16
+  ldx #hdma_pal & $ffff
+  stx $2181
+  sta $2183
+  DMA7 $00, hdma_pal_src, $80, 55
+
+  ; CG address table
+  lda #hdma_cg_addr >> 16
+  ldx #hdma_cg_addr & $ffff
+  stx $2181
+  sta $2183
+  DMA7 $00, hdma_cg_addr_src, $80, 227
+
+  ; Screen mode table
+  lda #hdma_mode >> 16
+  ldx #hdma_mode & $ffff
+  stx $2181
+  sta $2183
+  DMA7 $00, hdma_mode_src, $80, 5
+
+  ; BG1 scroll table
+  lda #hdma_bg1scroll >> 16
+  ldx #hdma_bg1scroll & $ffff
+  stx $2181
+  sta $2183
+  DMA7 $00, hdma_bg1scroll_src, $80, 21
+
+  ; BG2 scroll table
+  lda #hdma_bg2scroll >> 16
+  ldx #hdma_bg2scroll & $ffff
+  stx $2181
+  sta $2183
+  DMA7 $00, hdma_bg2scroll_src, $80, 13
+
+  ; Color math table
+  lda #hdma_math >> 16
+  ldx #hdma_math & $ffff
+  stx $2181
+  sta $2183
+  DMA7 $00, hdma_math_src, $80, 19
+
+  rts
+
+; =============================================
+; genfonts - Load font tiles into VRAM
+; Two copies: pseudo-4bpp at $0000, 2bpp at $4000
+; Uses DMA7 auto-increment trick: each trigger advances
+; the source address, so a loop of triggers loads sequential
+; characters with gaps in VRAM.
+; Requires: DBR=$00
+; =============================================
+genfonts
+  .databank 0
+  php
+  rep #$10
+  .xl
+  sep #$20
+  .as
+
+  ; Clear VRAM font area 1: $0000-$3FFF (pseudo-4bpp, 16KB)
+  ldx #$0000
+  stx $2116
+  DMA7 $09, zero, $18, $4000
+
+  ; Clear VRAM font area 2: $4000-$5FFF (2bpp, 8KB)
+  ldx #$4000
+  stx $2116
+  DMA7 $09, zero, $18, $2000
+
+  ; --- Load font as pseudo-4bpp at VRAM $0000 ---
+  ; Each 2bpp character is 16 bytes. In pseudo-4bpp mode,
+  ; each tile slot is 32 bytes ($20). We DMA 16 bytes per
+  ; character, stepping VRAM address by $20 each iteration.
+  sep #$10
+  .xs
+  rep #$20
+  .al
+
+  stz $2116            ; VRAM address = 0
+  stz $2117
+  ldx #$01             ; DMA mode: A→B, 2-reg (word writes)
+  stx $4370
+  ldx #font >> 16
+  stx $4374            ; source bank
+  lda #font & $ffff
+  sta $4372            ; source address (auto-increments across triggers)
+  lda #$0010
+  sta $4375            ; transfer 16 bytes per trigger
+  ldx #$18             ; B-bus = $2118 (VMDATAL)
+  stx $4371
+
+  lda #$0000
+- sta $2116            ; set VRAM address for this character
+  ldx #$10
+  stx $4375            ; reset transfer size (consumed by each trigger)
+  ldx #$80
+  stx $420b            ; trigger DMA channel 7
+  clc
+  adc #$20             ; next tile slot (32 bytes apart in pseudo-4bpp)
+  cmp #$2000
+  bne -
+
+  ; --- Load font as 2bpp at VRAM $4000 ---
+  ; Same trick, but tiles are 16 bytes apart ($10 step)
+  ldx #font >> 16
+  stx $4374
+  lda #font & $ffff
+  sta $4372            ; reset source to font start
+
+  lda #$4000
+- sta $2116
+  ldx #$10
+  stx $4375
+  ldx #$80
+  stx $420b
+  clc
+  adc #$10             ; next tile slot (16 bytes apart in 2bpp)
+  cmp #$5000
+  bne -
+
+  plp
+  rts
+
+
+; =============================================
+; video_init - Configure BG modes, layers, brightness vars
+; Sets up Mode 3 display with Mode 5 via HDMA switching
+; Requires: DBR=$00
+; =============================================
+video_init
+  .databank 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+
+  lda #$03             ; Mode 3, 8×8 tiles (Mode 5 via HDMA)
+  sta $2105
+
+  ; BG1 tilemap at VRAM $B000, 32×64 size
+  lda #$58             ; ($B000 >> 8) = $58... wait
+  ora #$02             ; SC size 32×64
+  sta $2107
+
+  ; BG2 tilemap at VRAM $A000, 32×64 size
+  lda #$50             ; ($A000 >> 8) = $50... wait
+  ora #$02
+  sta $2108
+
+  ; Chr base: BG1=$0000, BG2=$8000
+  lda #$40             ; BG2 chr at $8000 (nibble = $4)
+  sta $210b
+
+  ; Enable BG1+BG2 on main screen (no OBJ — we have no sprites)
+  lda #$03
+  sta $212c
+
+  ; Enable BG1+BG2 on sub screen (no OBJ)
+  lda #$03
+  sta $212d
+
+  ; Window 1 for color math (OBJ window)
+  lda #$20
+  sta $2125
+
+  ; Cut off leftmost subscreen pixel garbage
+  lda #$01
+  sta $2126            ; window 1 left
+  lda #$fe
+  sta $2127            ; window 1 right
+
+  ; 224-line mode
+  stz $2133            ; SETINI = normal (224 lines)
+
+  ; Color math: sub screen + fixed color
+  lda #$10
+  sta $2130
+
+  ; Window mask for main/sub screens
+  lda #$1f
+  sta $212e
+  sta $212f
+
+  ; --- Initialize WRAM state variables ---
+  ; With .databank 0, these access the WRAM mirror at $00:xxxx
+  lda #29              ; bar_yl=29 → bar_y=224 → clamps to scanline 1 (off-screen)
+  sta bar_yl
+  stz cur_bright
+  stz tgt_bright
+  lda #$01
+  sta fade_speed
+  stz fade_count
+  stz screen_dma_disable
+  stz screen_dma_disable+1
+
+  rts
+
+
+; =============================================
+; screen_on - Turn screen on with brightness
+; In emulator mode, CFG_BRIGHTNESS_LIMIT = 0 → use $0F
+; =============================================
+screen_on
+  .databank 0
+  sep #$20
+  .as
+  stz $2100            ; screen on, 0% brightness
+  ; Always use max brightness (emulator mode)
+  lda #$0f
+  sta tgt_bright
+  sta bright_limit
+  sta cur_bright
+  sta $2100            ; set brightness immediately
+  rts
+
+
+; =============================================
+; poc_display - Render emulator mode text
+; Uses hiprint to write text to WRAM tile buffers.
+; Caller must wait for NMI to DMA buffers to VRAM.
+; Requires: DBR=$00
+; =============================================
+poc_display
+  .databank 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+
+  ; title: "S A T E L L A V I E W" at row 3, bold
+  lda #3
+  sta print_y
+  lda #5               ; centered: (32-21)/2 ≈ 5
+  sta print_x
+  lda #title_str1 >> 16
+  sta print_bank
+  ldx #title_str1 & $ffff
+  stx print_src
+  lda #1               ; bold palette
+  sta print_pal
+  lda #32
+  sta print_count
+  jsr hiprint
+
+  ; subtitle: "revival project" at row 5
+  lda #5
+  sta print_y
+  lda #9               ; centered: (32-15)/2 ≈ 8
+  sta print_x
+  lda #title_str2 >> 16
+  sta print_bank
+  ldx #title_str2 & $ffff
+  stx print_src
+  stz print_pal        ; normal palette
+  lda #32
+  sta print_count
+  jsr hiprint
+
+  ; byline: "by DavidAF" at row 6
+  lda #6
+  sta print_y
+  lda #11              ; centered: (32-10)/2 = 11
+  sta print_x
+  lda #title_str3 >> 16
+  sta print_bank
+  ldx #title_str3 & $ffff
+  stx print_src
+  stz print_pal        ; normal palette
+  lda #32
+  sta print_count
+  jsr hiprint
+
+  ; line 1: "WE HAVE BREACHED THE PERIMITER" at row 10
+  lda #10
+  sta print_y
+  lda #3
+  sta print_x
+  lda #emu_str1 >> 16
+  sta print_bank
+  ldx #emu_str1 & $ffff
+  stx print_src
+  lda #1               ; bold palette
+  sta print_pal
+  lda #32
+  sta print_count
+  jsr hiprint
+
+  ; line 2: "No MCU detected" at row 12
+  lda #12
+  sta print_y
+  lda #4
+  sta print_x
+  lda #emu_str2 >> 16
+  sta print_bank
+  ldx #emu_str2 & $ffff
+  stx print_src
+  stz print_pal
+  lda #40
+  sta print_count
+  jsr hiprint
+
+  ; line 3: "sd2snes menu ROM loaded OK" at row 14
+  lda #14
+  sta print_y
+  lda #4
+  sta print_x
+  lda #emu_str3 >> 16
+  sta print_bank
+  ldx #emu_str3 & $ffff
+  stx print_src
+  stz print_pal
+  lda #40
+  sta print_count
+  jsr hiprint
+
+  ; line 4: "Edit palette.a65 for colors" at row 17
+  lda #17
+  sta print_y
+  lda #4
+  sta print_x
+  lda #emu_str4 >> 16
+  sta print_bank
+  ldx #emu_str4 & $ffff
+  stx print_src
+  stz print_pal
+  lda #40
+  sta print_count
+  jsr hiprint
+
+  ; line 5: "Edit main.a65 for this text" at row 19
+  lda #19
+  sta print_y
+  lda #4
+  sta print_x
+  lda #emu_str5 >> 16
+  sta print_bank
+  ldx #emu_str5 & $ffff
+  stx print_src
+  stz print_pal
+  lda #40
+  sta print_count
+  jsr hiprint
+
+  ; Wait one NMI frame for DMA to transfer text to VRAM
+- lda isr_done
+  lsr
+  bcc -
+  stz isr_done
+  rts
+
+
+; =============================================
+; snes_init - Initialize all PPU and CPU I/O registers
+; Requires: DBR = $00
 ; =============================================
 snes_init
   .databank 0
@@ -78,6 +498,7 @@ snes_init
   .as
   rep #$10
   .xl
+
   stz $4200            ; disable NMI, IRQ, auto joypad
   lda #$ff
   sta $4201            ; I/O port = all high
@@ -97,41 +518,43 @@ snes_init
   lda #$8f
   sta $2100            ; INIDISP = force blank + max brightness
 
-  ; OBJ settings
-  stz $2101            ; OBSEL = 8x8/16x16, base 0
+  ; OBJ settings (match snescom: 8x8+16x16, name=0, base=3)
+  lda #$03
+  sta $2101
+  stz $2102
+  stz $2103
 
   ; BG mode
-  lda #$03             ; Mode 3, 8x8 tiles
-  sta $2105
+  stz $2105
+  stz $2106
 
-  ; BG tilemap addresses
-  lda #(BG1_TILE_BASE >> 8) & $fc  ; BG1 tilemap
-  sta $2107
-  lda #(BG2_TILE_BASE >> 8) & $fc  ; BG2 tilemap
-  sta $2108
-  stz $2109            ; BG3
-  stz $210a            ; BG4
+  ; BG tilemap addresses (will be set properly in video_init)
+  stz $2107
+  stz $2108
+  stz $2109
+  stz $210a
 
   ; BG character base addresses
-  stz $210b            ; BG1/BG2 chr base = 0
-  stz $210c            ; BG3/BG4 chr base = 0
+  stz $210b
+  stz $210c
 
-  ; Scroll registers (all zero)
-  stz $210d            ; BG1 H-scroll
+  ; Scroll registers
   stz $210d
-  stz $210e            ; BG1 V-scroll
+  stz $210d
   stz $210e
-  stz $210f            ; BG2 H-scroll
+  stz $210e
   stz $210f
-  stz $2110            ; BG2 V-scroll
+  stz $210f
+  lda #$05             ; BG2 V-scroll initial (match snescom)
+  sta $2110
   stz $2110
-  stz $2111            ; BG3 H-scroll
   stz $2111
-  stz $2112            ; BG3 V-scroll
+  stz $2111
   stz $2112
-  stz $2113            ; BG4 H-scroll
+  stz $2112
   stz $2113
-  stz $2114            ; BG4 V-scroll
+  stz $2113
+  stz $2114
   stz $2114
 
   ; VRAM address mode
@@ -142,34 +565,52 @@ snes_init
   stz $2116
   stz $2117
 
+  ; Mode 7 matrix (identity)
+  stz $211a
+  stz $211b
+  lda #$01
+  sta $211b
+  stz $211c
+  stz $211c
+  stz $211d
+  stz $211d
+  stz $211e
+  sta $211e
+  stz $211f
+  stz $211f
+  stz $2120
+  stz $2120
+
+  ; CGRAM address
+  stz $2121
+
   ; Window settings
-  stz $2123            ; W12SEL
-  stz $2124            ; W34SEL
-  stz $2125            ; WOBJSEL
-  stz $2126            ; WH0
-  stz $2127            ; WH1
-  stz $2128            ; WH2
-  stz $2129            ; WH3
-  stz $212a            ; WBGLOG
-  stz $212b            ; WOBJLOG
+  stz $2123
+  stz $2124
+  stz $2125
+  stz $2126
+  stz $2127
+  stz $2128
+  stz $2129
+  stz $212a
+  stz $212b
 
   ; Main/sub screen designation
-  stz $212c            ; no layers enabled (Milestone 1: backdrop color only)
-  stz $212d            ; sub screen = none
-  stz $212e            ; TMW (window mask main)
-  stz $212f            ; TSW (window mask sub)
+  stz $212c
+  stz $212d
+  stz $212e
+  stz $212f
 
   ; Color math
-  lda #$30             ; fixed color math
-  sta $2130            ; CGWSEL
-  stz $2131            ; CGADSUB
-  lda #$e0             ; fixed color = black (all planes, intensity 0)
-  sta $2132            ; COLDATA
-
-  ; Screen mode (optional further setup)
+  lda #$30
+  sta $2130
+  stz $2131
+  lda #$e0
+  sta $2132            ; fixed color = black
   stz $2133            ; SETINI = normal
 
   rts
+
 
 ; =============================================
 ; waitblank - Wait for VBlank (poll $4212)
@@ -189,6 +630,7 @@ waitblank
   beq -
   rts
 
+
 ; =============================================
 ; clear_vram - Zero all 64KB of VRAM using DMA
 ; Requires: DBR = $00, force blank must be on
@@ -197,31 +639,17 @@ clear_vram
   .databank 0
   sep #$20
   .as
-  ; Set VRAM address to 0
+
   lda #$80
   sta $2115            ; VMAIN: increment after high byte write
   stz $2116            ; VMADD low = 0
   stz $2117            ; VMADD high = 0
 
   ; DMA channel 7: fixed source → VRAM ($2118/$2119)
-  lda #$09             ; transfer pattern 1 (write xx,xx+1), fixed source
-  sta $4370            ; DMA7 control
-  lda #$18             ; B-bus destination = $2118 (VMDATAL)
-  sta $4371
+  DMA7 $09, zero, $18, 0  ; size=0 → 65536 bytes
 
-  ; Source: point to our zero word at $C00000 (nmihook placeholder = $0000)
-  stz $4372            ; source addr low
-  stz $4373            ; source addr high
-  lda #$c0
-  sta $4374            ; source bank = $C0
-
-  ; Transfer size = 0 → 65536 bytes (all of VRAM)
-  stz $4375            ; size low
-  stz $4376            ; size high
-
-  lda #$80             ; trigger DMA channel 7
-  sta $420b
   rts
+
 
 ; =============================================
 ; clear_cgram - Zero all 512 bytes of CGRAM
@@ -231,47 +659,24 @@ clear_cgram
   .databank 0
   sep #$20
   .as
+
   stz $2121            ; CGADD = 0
 
   ; DMA channel 7: fixed source → CGRAM ($2122)
-  lda #$08             ; transfer pattern 0 (single write), fixed source
-  sta $4370
-  lda #$22             ; B-bus destination = $2122 (CGDATA)
-  sta $4371
+  DMA7 $08, zero, $22, $0200  ; 512 bytes
 
-  ; Source: zero byte at $C00000
-  stz $4372
-  stz $4373
-  lda #$c0
-  sta $4374
-
-  ; Transfer size = 512 bytes (256 colors × 2 bytes)
-  stz $4375            ; size low = 0
-  lda #$02
-  sta $4376            ; size high = 2 → 512 bytes
-
-  lda #$80
-  sta $420b            ; trigger DMA7
   rts
 
-; =============================================
-; WRAM variables
-; =============================================
-; These are accessed with DBR=$7E via absolute addressing,
-; or via direct page (which always accesses bank $00 low WRAM mirror).
-; Address $0027 with DBR=$7E → $7E0027 (WRAM)
-; Address $0027 via direct page → $00:0027 (mirrors $7E0027)
-
-isr_done = $0027      ; NMI completion flag (1 byte)
 
 ; =============================================
-; Include NMI/IRQ handlers (must be before header which references them)
+; Include additional source files
 ; =============================================
+.include "ui.a65"
+.include "dma.a65"
+.include "font.a65"
+.include "palette.a65"
+.include "const.a65"
 .include "reset.a65"
-
-; =============================================
-; Include ROM header and vectors (at end of bank)
-; =============================================
 .include "header.a65"
 
 ; =============================================
