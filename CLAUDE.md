@@ -275,3 +275,48 @@ wram_routine_src:
 - `rep #$10 : .xl` = set 16-bit X/Y
 - `- bra -` = branch to previous anonymous label (infinite loop)
 - `+` = forward anonymous label, `-` = backward anonymous label
+
+## Knowledge-First Development
+
+This project involves specialized hardware (SNES PPU, 65816 CPU, DMA/HDMA, OAM) where incorrect assumptions cause silent bugs — wrong register values, misaligned instructions, writes to WRAM instead of hardware registers. **Always build understanding before writing code.**
+
+### When entering an unfamiliar domain:
+
+1. **Check existing skills first** — Read the relevant `.claude/skills/snes-ref/reference/` documents. They are validated against the official Nintendo SNES Development Manual and cross-referenced with this codebase.
+
+2. **If no skill covers the topic** — Stop and build one before coding:
+   - Extract the relevant chapter from the manual (`Y:\SNESDevManual\SNESDevManual\book1_djvu.txt` or `book2_djvu.txt`)
+   - Ask the user for diagrams/flowcharts (the OCR text is poor for tables and register layouts)
+   - Cross-reference with the actual codebase to verify register usage
+   - Create a reference document in `.claude/skills/snes-ref/reference/`
+   - Update `SKILL.md` with a link to the new reference
+
+3. **If the skill exists but feels thin** — Validate and deepen it:
+   - Check register bit layouts against the manual
+   - Verify initial values and setup sequences
+   - Add codebase examples showing real usage
+   - Document gotchas discovered through debugging
+
+### Reference material
+- **Book I** (`book1_djvu.txt`, 24638 lines): SNES core — OBJ, BG, Window, Color Math, DMA/HDMA, Sound/SPC700, 65816 CPU, PPU registers, Appendix A
+- **Book II** (`book2_djvu.txt`, 32184 lines): Enhancement chips — SA-1, SuperFX/GSU, DSP1, accessories
+- OCR quality is poor for diagrams — ask the user for screenshots of flowcharts and register tables
+
+### Domains with existing skill coverage
+- PPU registers (all $21xx/$42xx with bit layouts)
+- OBJ/Sprites (OAM format, sizes, priority, limits)
+- BG/Backgrounds (modes 0-7, tilemaps, CGRAM, character data)
+- Window masking (Window 1/2, logic ops, color window)
+- DMA & HDMA (transfer modes, B-bus patterns, table format)
+- 65816 addressing modes
+
+### Domains still needing skills (from Book I)
+- Sound/SPC700 (BRR samples, DSP registers, SPC700 instruction set)
+- Mode 7 rotation/scaling (matrix math, setup)
+- Mosaic effect
+- Color math deep-dive (beyond what's in the window reference)
+
+### Domains still needing skills (from Book II)
+- SA-1 co-processor
+- SuperFX/GSU
+- DSP1
