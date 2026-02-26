@@ -107,6 +107,7 @@ mainloop
   lsr
   bcc -
   stz isr_done
+  jsr read_pad
   jsr update_ball
   jsr animate_gradient
   bra mainloop
@@ -157,7 +158,12 @@ _anim_tick
 
   lda bounce_wall
   dec a                  ; wall 1-4 → palette index 0-3
+  rep #$20
+  .al
+  and #$00ff             ; zero-extend to 16-bit (clear hidden B)
   tax
+  sep #$20
+  .as
   lda gradient_phase_offsets,x
   cmp anim_src_idx       ; already showing this palette?
   bne +                  ; different → start transition
@@ -289,7 +295,7 @@ _anim_step_loop
   ; Restore Y = step index + 1 for loop control
   lda anim_temp+2        ; saved step index
   inc a                  ; step++
-  tay                    ; Y = next step (tay zero-extends 8→16 in .xl)
+  tay                    ; Y = next step (B=0 from tya above, so high byte clean)
   cpy #NUM_GRADIENT_STEPS
   beq _anim_steps_done
   jmp _anim_step_loop
@@ -1123,6 +1129,7 @@ clear_cgram
 ; Include additional source files
 ; =============================================
 .include "ui.a65"
+.include "pad.a65"
 .include "dma.a65"
 .include "font.a65"
 .include "palette.a65"

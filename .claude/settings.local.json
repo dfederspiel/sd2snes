@@ -51,7 +51,8 @@
       "Bash(git commit:*)",
       "Bash(wc -l /c/Users/david/code/sd2snes/snes-64tass/*.a65 /c/Users/david/code/sd2snes/snes-64tass/*.i65)",
       "Bash(sort -k2)",
-      "Bash(64tass:*)"
+      "Bash(64tass:*)",
+      "Bash(wc:*)"
     ]
   }
 }

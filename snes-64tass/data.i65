@@ -49,25 +49,38 @@ fade_speed   = $0033  ; .byte - frames between fade steps
 fade_count   = $0034  ; .byte - current fade frame counter
 
 ; =============================================
-; Joypad ($0040-$004F)
+; Joypad ($0040-$0057)
 ; =============================================
-pad1mem  = $0040  ; .word - joypad current state
-pad1trig = $0042  ; .word - joypad edge detection (newly pressed)
+pad1mem    = $0040  ; .word - joypad current state
+pad1trig   = $0042  ; .word - joypad edge detection (newly pressed)
+pad1delay  = $0044  ; .word - key repeat delay counter
+pad_b      = $0046  ; .byte - B button (edge-triggered)
+pad_y      = $0047  ; .byte - Y button
+pad_select = $0048  ; .byte - Select button
+pad_start  = $0049  ; .byte - Start button
+pad_up     = $004A  ; .byte - D-pad up
+pad_down   = $004B  ; .byte - D-pad down
+pad_left   = $004C  ; .byte - D-pad left
+pad_right  = $004D  ; .byte - D-pad right
+pad_a      = $004E  ; .byte - A button
+pad_x      = $004F  ; .byte - X button
+pad_l      = $0050  ; .byte - L shoulder
+pad_r      = $0051  ; .byte - R shoulder
 
 ; =============================================
-; Animation state ($0050-$005F)
+; Animation state ($0058-$006F)
 ; =============================================
-anim_frame   = $0050  ; .byte - interpolation progress (0-127)
-anim_speed   = $0051  ; .byte - frames to skip between updates
-anim_timer   = $0052  ; .byte - frame skip counter
-anim_phase   = $0053  ; .byte - current palette transition (0-2)
-anim_src_idx = $0054  ; .word - ROM offset of "from" palette
-anim_dst_idx = $0056  ; .word - ROM offset of "to" palette
-anim_src_ptr = $0058  ; 3 bytes - long pointer to src palette in ROM
-anim_dst_ptr = $005B  ; 3 bytes - long pointer to dst palette in ROM
-anim_temp    = $005E  ; 4 bytes - temp workspace for interpolation
-staging_ptr  = $0062  ; 2 bytes - pointer to inactive hdma_pal buffer
-hdma_pal_flip = $0064 ; .byte - 0: HDMA reads A, write B; 1: HDMA reads B, write A
+anim_frame   = $0058  ; .byte - interpolation progress (0-127)
+anim_speed   = $0059  ; .byte - frames to skip between updates
+anim_timer   = $005A  ; .byte - frame skip counter
+anim_phase   = $005B  ; .byte - current palette transition (0-2)
+anim_src_idx = $005C  ; .word - ROM offset of "from" palette
+anim_dst_idx = $005E  ; .word - ROM offset of "to" palette
+anim_src_ptr = $0060  ; 3 bytes - long pointer to src palette in ROM
+anim_dst_ptr = $0063  ; 3 bytes - long pointer to dst palette in ROM
+anim_temp    = $0066  ; 4 bytes - temp workspace for interpolation
+staging_ptr  = $006A  ; 2 bytes - pointer to inactive hdma_pal buffer
+hdma_pal_flip = $006C ; .byte - 0: HDMA reads A, write B; 1: HDMA reads B, write A
 
 ; =============================================
 ; Ball sprite state ($0070-$007F)

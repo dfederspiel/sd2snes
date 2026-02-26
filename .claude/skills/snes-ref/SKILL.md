@@ -113,6 +113,9 @@ my_function
 - `phb` / `plb` = push/pull data bank register
 - `phk` / `plb` = set data bank to program bank
 - `mvn src,dst` = block move next (decrementing)
+- `xba` = exchange B and A (swap high/low bytes of 16-bit accumulator)
+- `tax` / `tay` = transfer accumulator to index — **DANGER**: with M=1/X=0, transfers full 16-bit C including hidden B byte. See [Mixed-Mode Transfers](reference/mixed-mode-transfers.md).
+- `txa` / `tya` = transfer index to accumulator — with M=1/X=0, sets hidden B to index high byte
 - `jsl` / `rtl` = long subroutine call/return (24-bit)
 - `jsr` / `rts` = short subroutine call/return (16-bit, same bank)
 
@@ -192,3 +195,4 @@ Fires every VBlank (~60Hz). DMAs BG1/BG2 tile buffers WRAM->VRAM, updates cursor
 - [DMA & HDMA](reference/dma-hdma.md) — GPDMA bulk transfers, HDMA per-scanline effects, transfer modes, B-bus patterns, table format, channel allocation, V-Blank cycle budget, CGRAM/VRAM/OAM access windows
 - [Hardware Math](reference/hardware-math.md) — Hardware multiply ($4202/$4203), divide ($4204-$4206), result registers ($4214-$4217), cycle wait times, signed multiply via Mode 7 regs, codebase examples
 - [65816 Addressing Modes](reference/addressing-modes.md) — All addressing modes with snescom syntax
+- [Mixed-Mode Transfers](reference/mixed-mode-transfers.md) — Hidden B register trap: TAX/TAY in mixed M=1/X=0 mode, safe patterns, audit checklist

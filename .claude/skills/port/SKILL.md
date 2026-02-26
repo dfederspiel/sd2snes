@@ -225,20 +225,27 @@ The same applies to `.as`/`.al` for accumulator immediates (`lda #imm`, `cmp #im
 
 This is safe because the SNES never changes the D register in our code. If you ever use `TCD` to change DP, update `.dpage` accordingly.
 
-### Hidden B register corrupts tay in 8-bit mode
-The 65816 has a hidden "B" register (high byte of the 16-bit accumulator). With 8-bit A (`sep #$20`), `tay` transfers BOTH A (low) and B (high) to 16-bit Y. If B contains garbage, Y gets a wrong high byte.
+### Hidden B register corrupts TAX/TAY in mixed mode (M=1, X=0) — CRITICAL
+The 65816 accumulator is always 16-bit internally (C = B:A). With 8-bit A (`sep #$20`), only the low byte (A) is visible. The high byte (B) is **hidden but persistent** — no 8-bit operation ever clears it, and it survives across `jsr`/`rts`, `php`/`plp`, and even NMI interrupts.
 
-**Fix**: When computing Y offsets from A values, wrap in 16-bit A mode:
+**The trap**: `TAX` and `TAY` with 16-bit index (X=0) transfer the **full 16-bit C** — including the stale B byte — into the index register. This silently corrupts the high byte of X or Y.
+
+**Common sources of stale B**: `xba` (pad.a65 uses this), any prior 16-bit accumulator operation followed by `sep #$20`, or return from functions that used 16-bit A mode.
+
+**Bug example**: `read_pad` uses `xba` to unpack joypad bits, leaving B=$08. This leaks through `update_ball` into `animate_gradient`, where `tax` produces X=$0800 instead of X=$0000. The gradient reads garbage palette offsets and transitions break.
+
+**Fix**: Zero-extend through 16-bit mode before any TAX/TAY in mixed mode:
 ```asm
-  rep #$20              ; 16-bit A clears B influence
+  ; A = 8-bit value, B = unknown garbage
+  rep #$20
   .al
-  tya                   ; full 16-bit transfer
-  clc
-  adc #20              ; offset
-  tay                   ; clean 16-bit result
+  and #$00ff            ; clear hidden B
+  tax                   ; X = $00:value — safe
   sep #$20
   .as
 ```
+
+**Rule**: Every `tax`/`tay` in .as/.xl mode needs B to be verified clean. See [Mixed-Mode Transfers reference](../snes-ref/reference/mixed-mode-transfers.md) for full details, audit checklist, and all safe patterns.
 
 ### WRAM buffer labels are already 24-bit
 Labels like `BG1_TILE_BUF = $7EB000` in memmap.i65 are full addresses. Do NOT add `$7E0000 +` when using them as DMA source. `DMA7 $01, BG1_TILE_BUF, $18, $1000` is correct.
