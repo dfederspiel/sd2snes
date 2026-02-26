@@ -1,0 +1,371 @@
+; anim.a65 - Ball sprite movement and gradient color transitions
+; Called from both mainloop (emulator mode) and fileselloop (hardware mode).
+; All variables are in direct page ($0058-$0074), safe from any DBR context.
+
+; =============================================
+; update_ball - Move ball and bounce off edges
+; NMI handler reads ball_x/ball_y to update OAM.
+; All vars are DP ($0070-$0074), safe from any DBR context.
+; =============================================
+update_ball
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+
+  stz bounce_wall        ; clear bounce flag each frame
+
+  ; --- Move X ---
+  lda ball_x
+  clc
+  adc ball_vx          ; signed add
+  sta ball_x
+  ; Check X bounds
+  cmp #BALL_MAX_X+1
+  bcs _ball_bounce_x   ; >= MAX+1, bounce
+  cmp #BALL_MIN_X
+  bcs _ball_x_ok       ; >= MIN, ok
+_ball_bounce_x
+  ; Negate X velocity
+  lda ball_vx
+  eor #$ff
+  inc a
+  sta ball_vx
+  ; Clamp + set wall flag based on NEW velocity direction.
+  ; After negation: positive = was moving left, hit left wall
+  ;                 negative = was moving right, hit right wall
+  bmi _bx_clamp_max
+  lda #BALL_MIN_X
+  sta ball_x
+  lda #WALL_LEFT
+  sta bounce_wall
+  bra _ball_x_ok
+_bx_clamp_max
+  lda #BALL_MAX_X
+  sta ball_x
+  lda #WALL_RIGHT
+  sta bounce_wall
+_ball_x_ok
+
+  ; --- Move Y ---
+  lda ball_y
+  clc
+  adc ball_vy          ; signed add
+  sta ball_y
+  ; Check Y bounds
+  cmp #BALL_MAX_Y+1
+  bcs _ball_bounce_y   ; >= MAX+1, bounce
+  cmp #BALL_MIN_Y
+  bcs _ball_y_ok       ; >= MIN, ok
+_ball_bounce_y
+  ; Negate Y velocity
+  lda ball_vy
+  eor #$ff
+  inc a
+  sta ball_vy
+  ; Clamp + set wall flag (Y overrides X for corner bounces)
+  bmi _by_clamp_max
+  lda #BALL_MIN_Y
+  sta ball_y
+  lda #WALL_TOP
+  sta bounce_wall
+  bra _ball_y_ok
+_by_clamp_max
+  lda #BALL_MAX_Y
+  sta ball_y
+  lda #WALL_BOTTOM
+  sta bounce_wall
+_ball_y_ok
+  ; OAM is updated by the NMI handler during VBlank
+  rts
+
+
+; =============================================
+; animate_gradient - Bounce-triggered gradient transitions
+; Only starts a new transition when bounce_wall != 0 and idle.
+; Interpolates between src and dst palettes over 128 frames.
+; Called from both mainloop (DBR=$7E) and fileselloop (DBR=$00).
+; All pre-push vars are DP; internally switches to DBR=$00 for
+; hardware multiply and ROM access. Preserves caller's DBR.
+; =============================================
+animate_gradient
+  .databank 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+
+  ; --- Speed gate: only animate every anim_speed+1 frames ---
+  lda anim_timer
+  inc a
+  cmp anim_speed
+  bcc _anim_tick
+  lda #0               ; time to animate — reset timer
+_anim_tick
+  sta anim_timer
+  beq +                  ; timer == 0 → time to animate
+  jmp _anim_rts          ; timer != 0 → skip this frame
++
+
+  ; --- Check state: currently transitioning? ---
+  lda anim_frame
+  bne _anim_do_interp    ; anim_frame != 0 → continue transition
+
+  ; --- Idle: check for bounce trigger ---
+  lda bounce_wall
+  bne +                  ; bounce → start new transition
+  jmp _anim_rts          ; no bounce → stay idle
++
+
+  ; --- Start new transition ---
+  ; Switch DBR=$00 for ROM data access
+  phb
+  lda #$00
+  pha
+  plb
+  .databank 0
+
+  lda bounce_wall
+  dec a                  ; wall 1-4 → palette index 0-3
+  rep #$20
+  .al
+  and #$00ff             ; zero-extend to 16-bit (clear hidden B)
+  tax
+  sep #$20
+  .as
+  lda gradient_phase_offsets,x
+  cmp anim_src_idx       ; already showing this palette?
+  bne +                  ; different → start transition
+  jmp _anim_restore_dbr  ; same → skip (no visible change)
++
+  sta anim_dst_idx
+  stz anim_dst_idx+1
+  lda #1
+  sta anim_frame         ; begin transition at frame 1
+  bra _anim_setup_ptrs
+
+_anim_do_interp
+  ; --- Switch DBR=$00 for hardware multiply + ROM access ---
+  phb
+  lda #$00
+  pha
+  plb
+  .databank 0
+
+_anim_setup_ptrs
+  ; --- Set up src/dst palette pointers (24-bit into ROM) ---
+  rep #$20
+  .al
+  lda anim_src_idx
+  clc
+  adc #gradient_pal_data & $ffff
+  sta anim_src_ptr
+  lda anim_dst_idx
+  clc
+  adc #gradient_pal_data & $ffff
+  sta anim_dst_ptr
+  sep #$20
+  .as
+  lda #gradient_pal_data >> 16
+  sta anim_src_ptr+2
+  sta anim_dst_ptr+2
+
+  ; --- Set staging_ptr to the INACTIVE buffer (double-buffer) ---
+  ; animate_gradient writes here; HDMA reads the other buffer.
+  ; After all writes, we swap HDMA's source pointer ($4322).
+  lda hdma_pal_flip
+  bne +
+  rep #$20
+  .al
+  lda #hdma_pal_back & $ffff  ; flip=0: HDMA reads A, write to B
+  bra _staging_set
++ rep #$20
+  .al
+  lda #hdma_pal & $ffff       ; flip=1: HDMA reads B, write to A
+_staging_set
+  sta staging_ptr
+  sep #$20
+  .as
+
+  ; --- Interpolate 10 gradient steps ---
+  ldy #0
+
+_anim_step_loop
+  phy                    ; save step index
+
+  ; --- Interpolate R channel (offset Y + 0) ---
+  jsr interp_channel
+  sta anim_temp+1        ; save interpolated R
+
+  ; --- Interpolate G channel (offset Y + NUM_GRADIENT_STEPS) ---
+  rep #$20
+  .al
+  tya
+  clc
+  adc #NUM_GRADIENT_STEPS
+  tay
+  sep #$20
+  .as
+  jsr interp_channel
+  sta anim_temp+2        ; save interpolated G
+
+  ; --- Interpolate B channel (offset Y + 2*NUM_GRADIENT_STEPS) ---
+  rep #$20
+  .al
+  tya
+  clc
+  adc #NUM_GRADIENT_STEPS
+  tay
+  sep #$20
+  .as
+  jsr interp_channel
+  ; B result in A
+
+  ; --- Pack BGR555: low = ((G&7)<<5)|R, high = (B<<2)|(G>>3) ---
+  asl a
+  asl a                  ; B << 2
+  sta anim_temp+3        ; save shifted B
+  lda anim_temp+2        ; G
+  lsr a
+  lsr a
+  lsr a                  ; G >> 3
+  ora anim_temp+3        ; (B<<2) | (G>>3)
+  sta anim_temp+3        ; = high byte
+
+  lda anim_temp+2        ; G
+  and #$07
+  asl a
+  asl a
+  asl a
+  asl a
+  asl a                  ; (G&7) << 5
+  ora anim_temp+1        ; | R
+  sta anim_temp+0        ; = low byte
+
+  ; --- Write to staging buffer via (staging_ptr),y ---
+  ; Double-buffered: writes go to the inactive buffer.
+  ; Each HDMA entry is 3 bytes. Color bytes at +1, +2.
+  ; Step N → byte offset = N*3 + 1
+  ply                    ; restore step index (0-9)
+  tya
+  sta anim_temp+2        ; save step for later
+  asl a                  ; step*2
+  clc
+  adc anim_temp+2        ; step*3
+  inc a                  ; +1 (skip scanline count byte)
+  tay                    ; Y = byte offset for indirect write
+
+  lda anim_temp+0        ; color low byte
+  sta (staging_ptr),y    ; write to inactive buffer
+  iny
+  lda anim_temp+3        ; color high byte
+  sta (staging_ptr),y    ; write to inactive buffer
+
+  ; Restore Y = step index + 1 for loop control
+  lda anim_temp+2        ; saved step index
+  inc a                  ; step++
+  tay                    ; Y = next step (B=0 from tya above, so high byte clean)
+  cpy #NUM_GRADIENT_STEPS
+  beq _anim_steps_done
+  jmp _anim_step_loop
+
+_anim_steps_done
+  ; --- Publish: swap HDMA ch2 source to the buffer we just wrote ---
+  ; HDMA uses internal A2Ax registers during active display, so updating
+  ; $4322/$4323 here is safe — HDMA picks up the new pointer at the
+  ; next V-Blank re-initialization. No mid-frame tear possible.
+  ldx staging_ptr
+  stx $4322              ; HDMA ch2 A-bus address → newly written buffer
+  lda hdma_pal_flip
+  eor #$01
+  sta hdma_pal_flip      ; toggle: next frame writes to the other buffer
+
+  ; --- Advance animation frame (step by 8 for snappy transitions) ---
+  lda anim_frame
+  clc
+  adc #8
+  cmp #128
+  bcc _anim_store_frame
+
+  ; --- Transition complete: dst becomes src, go idle ---
+  lda #0
+  sta anim_frame
+  lda anim_dst_idx
+  sta anim_src_idx
+  lda anim_dst_idx+1
+  sta anim_src_idx+1
+  bra _anim_restore_dbr
+
+_anim_store_frame
+  sta anim_frame
+
+_anim_restore_dbr
+  ; --- Restore caller's DBR ---
+  plb
+  .databank ?
+_anim_rts
+  .databank ?
+  rts
+
+
+; =============================================
+; interp_channel - Interpolate one 5-bit color channel
+; Input:  Y = offset into palette arrays
+;         anim_src_ptr/anim_dst_ptr = 24-bit ROM pointers
+;         anim_frame = interpolation factor (0-127)
+; Output: A = interpolated value (0-31)
+; Preserves: Y
+; Clobbers: A
+; Requires: .databank 0 (for multiply registers $4202-$4217)
+; =============================================
+interp_channel
+  .databank 0
+  lda [anim_src_ptr],y
+  sta anim_temp+0          ; save src
+  lda [anim_dst_ptr],y
+  sec
+  sbc anim_temp+0          ; A = delta = dst - src (signed, -31..+31)
+  beq ic_src_only         ; delta=0 → return src unchanged
+  bpl ic_positive
+
+  ; --- Negative delta ---
+  eor #$ff
+  inc a                    ; A = |delta|
+  sta $4202                ; multiplicand = |delta|
+  lda anim_frame
+  sta $4203                ; multiplier → product ready in 8 cycles
+  ; Fill the 8-cycle wait (need 8 master cycles minimum):
+  nop                      ; 2 cycles
+  nop                      ; 2 cycles
+  nop                      ; 2 cycles
+  nop                      ; 2 cycles = 8 total
+  lda $4216
+  asl a                    ; carry = bit 7 of low product byte
+  lda $4217
+  rol a                    ; A = product >> 7
+  eor #$ff
+  inc a                    ; negate offset
+  clc
+  adc anim_temp+0          ; A = src - offset
+  rts
+
+ic_positive
+  ; --- Positive delta ---
+  sta $4202                ; multiplicand = delta
+  lda anim_frame
+  sta $4203                ; multiplier
+  nop                      ; 2 cycles
+  nop                      ; 2 cycles
+  nop                      ; 2 cycles
+  nop                      ; 2 cycles = 8 total
+  lda $4216
+  asl a                    ; carry = bit 7
+  lda $4217
+  rol a                    ; A = product >> 7
+  clc
+  adc anim_temp+0          ; A = src + offset
+  rts
+
+ic_src_only
+  lda anim_temp+0          ; return src unchanged
+  rts
