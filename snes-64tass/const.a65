@@ -249,6 +249,361 @@ time_win_h    .byte 3
 text_ellipse  .byte 127, 128, 0
 
 ; =============================================
+; Main Menu window constants
+; =============================================
+sysinfo_win_x  .byte 10
+sysinfo_win_y  .byte 9
+sysinfo_win_w  .byte 43
+sysinfo_win_h  .byte 17
+
+; =============================================
+; Menu and config text strings
+; =============================================
+text_mainmenu                       .text "Main Menu"
+                                    .byte 0
+text_mm_file                        .text "File Browser"
+                                    .byte 0
+text_mm_last                        .text "Recent games"
+                                    .byte 0
+text_mm_favorites                   .text "Favorite games"
+                                    .byte 0
+mtext_mm_cfg                        .text "Configuration"
+                                    .byte 0
+mtext_mm_sysinfo                    .text "System Information"
+                                    .byte 0
+mtext_cfg_time                      .text "Set Clock"
+                                    .byte 0
+mtext_cfg_bsx                       .text "BS-X Settings"
+                                    .byte 0
+mtext_cfg_browser                   .text "Browser Settings"
+                                    .byte 0
+mtext_cfg_chip                      .text "Chip Options"
+                                    .byte 0
+mtext_cfg_sgb                       .text "SGB Settings"
+                                    .byte 0
+mtext_cfg_ingame                    .text "In-game Settings"
+                                    .byte 0
+mtext_cfg_savestates                .text "Savestates Settings"
+                                    .byte 0
+mtext_cfg_scic                      .text "SuperCIC Settings"
+                                    .byte 0
+mtext_bsx_timesource                .text "BS-X clock"
+                                    .byte 0
+mtext_bsx_time                      .text "Custom time"
+                                    .byte 0
+mtext_scic_enable                   .text "Enable SuperCIC"
+                                    .byte 0
+mtext_scic_vmode_menu               .byte $20, 129
+                                    .text "Menu video mode"
+                                    .byte 0
+mtext_scic_vmode_game               .byte $20, 129
+                                    .text "Game video mode"
+                                    .byte 0
+mtext_browser_sort                  .text "Sort directories"
+                                    .byte 0
+mtext_browser_hide_ext              .text "Hide file extensions"
+                                    .byte 0
+mtext_browser_screensaver           .text "Screensaver"
+                                    .byte 0
+mtext_browser_screensaver_timeout   .text "Fade screen after"
+                                    .byte 0
+mtext_browser_ledbright             .text "LED brightness"
+                                    .byte 0
+mtext_ingame_cheats                 .text "Start with cheats enabled"
+                                    .byte 0
+mtext_ingame_shortreset             .text "Reset to menu"
+                                    .byte 0
+mtext_ingame_enable                 .text "In-game hook"
+                                    .byte 0
+mtext_ingame_buttons                .byte $20, 129
+                                    .text "In-game buttons"
+                                    .byte 0
+mtext_ingame_holdoff                .byte $20, 129
+                                    .text "Initial holdoff"
+                                    .byte 0
+mtext_ingame_savestate              .text "In-game savestates"
+                                    .byte 0
+mtext_savestate_slots               .byte $20, 129
+                                    .text "Savestate slots"
+                                    .byte 0
+mtext_loadstate_delay               .byte $20, 129
+                                    .text "Load delay (frames)"
+                                    .byte 0
+mtext_sgb_enable_hooks              .text "In-game hooks"
+                                    .byte 0
+mtext_sgb_enable_state              .text "Savestates (XR, XL)"
+                                    .byte 0
+mtext_sgb_enh_override              .text "SGB features"
+                                    .byte 0
+mtext_sgb_spr_increase              .text "Maximum sprites limit (40)"
+                                    .byte 0
+mtext_sgb_volume_boost              .text "Volume boost"
+                                    .byte 0
+mtext_sgb_clock                     .text "Clock (Timing)"
+                                    .byte 0
+mtext_sgb_bios                      .text "BIOS version"
+                                    .byte 0
+mtext_ingame_regionpatch            .text "Auto region patch"
+                                    .byte 0
+mtext_ingame_1chiptransientfixes    .text "1CHIP transient fixes"
+                                    .byte 0
+mtext_ingame_brightlimit            .text "Brightness limit"
+                                    .byte 0
+mtext_ingame_resetpatch             .text "Reset patch for clock phase"
+                                    .byte 0
+mtext_ingame_autosave               .text "Autosave"
+                                    .byte 0
+mtext_ingame_autosave_msu1          .byte $20, 129
+                                    .text "MSU-1 Autosave"
+                                    .byte 0
+mtext_chip_cx4_speed                .text "Cx4 speed"
+                                    .byte 0
+mtext_chip_gsu_speed                .text "SuperFX speed"
+                                    .byte 0
+mtext_chip_msu1_volume_boost        .text "MSU-1 volume boost"
+                                    .byte 0
+
+; Menu description strings
+mdesc_mm_last                       .text "Show up to 10 most recently played games"
+                                    .byte 0
+mdesc_mm_favorites                  .text "Show up to 10 favorite games"
+                                    .byte 0
+mdesc_mm_cfg                        .text "Configure the sd2snes"
+                                    .byte 0
+mdesc_mm_sysinfo                    .text "Info about FW version, SD Card, SNES, CIC"
+                                    .byte 127, 128, 0
+mdesc_cfg_time                      .text "Set the date and time"
+                                    .byte 0
+mdesc_cfg_bsx                       .text "BS-X/Satellaview specific settings"
+                                    .byte 0
+mdesc_cfg_browser                   .text "Change file browser settings"
+                                    .byte 0
+mdesc_cfg_chip                      .text "Set special chip features"
+                                    .byte 0
+mdesc_cfg_ingame                    .text "Set in-game features"
+                                    .byte 0
+mdesc_cfg_sgb                       .text "Set Super Game Boy features"
+                                    .byte 0
+mdesc_cfg_savestates                .text "Set savestates features"
+                                    .byte 0
+mdesc_cfg_scic                      .text "Enable/Disable SuperCIC and set video modes"
+                                    .byte 0
+mdesc_bsx_timesource                .text "Choose what date and time BS-X games see"
+                                    .byte 0
+mdesc_bsx_time                      .text "Set custom time and date for BS-X games"
+                                    .byte 0
+mdesc_scic_enable                   .text "Required for SuperCIC enhanced features"
+                                    .byte 0
+mdesc_scic_vmode_menu               .text "Set video mode for menu"
+                                    .byte 0
+mdesc_scic_vmode_game               .text "Set video mode for games"
+                                    .byte 0
+mdesc_browser_sort                  .text "Choose whether to sort file lists"
+                                    .byte 0
+mdesc_browser_hide_ext              .text "Choose whether to hide file extensions"
+                                    .byte 0
+mdesc_browser_screensaver           .text "Fade-out the screen after some time"
+                                    .byte 0
+mdesc_browser_screensaver_timeout   .text "Set time after which to fade the screen"
+                                    .byte 0
+mdesc_browser_ledbright             .text "Change brightness of LEDs"
+                                    .byte 0
+mdesc_ingame_cheats                 .text "Whether to start out with cheats enabled. Can be changed using in-game buttons"
+                                    .byte 0
+mdesc_ingame_shortreset             .text "Go back to menu on short reset if enabled"
+                                    .byte 0
+mdesc_ingame_enable                 .text "Required for in-game buttons and 7E/7F cheats"
+                                    .byte 0
+mdesc_ingame_buttons                .text "Enable in-game buttons (reset, en/disable cheats"
+                                    .byte 127, 128
+                                    .text "). Requires in-game hook to be enabled."
+                                    .byte 0
+mdesc_ingame_holdoff                .text "Wait 10 seconds before enabling hook (helps some games boot with hook enabled)"
+                                    .byte 0
+mdesc_ingame_savestate              .text "Enable in-game savestates and choose controller. Default: Save - Start+L / Load - Start+R"
+                                    .byte 0
+mdesc_savestate_slots               .text "Enable savestate slots. Select+Dpad: Each direction is a slot to choose"
+                                    .byte 0
+mdesc_loadstate_delay               .text "Adjust the load state delay (frames)"
+                                    .byte 0
+mdesc_sgb_enable_hooks              .text "Required for in-game buttons"
+                                    .byte 0
+mdesc_sgb_enable_state              .text "Enable built-in savestates on SGB2 (XR, XL)"
+                                    .byte 0
+mdesc_sgb_enh_override              .text "Disable/enable the SGB enhancements"
+                                    .byte 0
+mdesc_sgb_spr_increase              .text "Increase number of supported visible sprites"
+                                    .byte 0
+mdesc_sgb_volume_boost              .text "Set volume boost for SGB audio if its too quiet"
+                                    .byte 0
+mdesc_sgb_clock                     .text "Adjusts the SGB clock (timing)"
+                                    .byte 0
+mdesc_sgb_bios                      .text "Select a SGB firmware/BIOS version"
+                                    .byte 0
+mdesc_ingame_regionpatch            .text "Bypass simple region protection by games"
+                                    .byte 0
+mdesc_ingame_1chiptransientfixes    .text "Patch brightness changes to fix sync glitches, fading scanlines and missing shadow on 1CHIP/Jr. consoles"
+                                    .byte 0
+mdesc_ingame_brightlimit            .text "Limit overall brightness (e.g. on 1CHIP consoles to meet RGB line levels)"
+                                    .byte 0
+mdesc_ingame_resetpatch             .text "Enable reset patch to align clocks.  Fixes graphical issues in some games"
+                                    .byte 0
+mdesc_ingame_autosave               .text "Automatically save SRM file when Save RAM contents change"
+                                    .byte 0
+mdesc_ingame_autosave_msu1          .text "MSU-1: Take some opportunities to auto-save SRM file. May cause brief stuttering."
+                                    .byte 0
+mdesc_chip_cx4_speed                .text "Set speed of Cx4 soft core"
+                                    .byte 0
+mdesc_chip_gsu_speed                .text "Set speed of SuperFX soft core"
+                                    .byte 0
+mdesc_chip_msu1_volume_boost        .text "Set volume boost for MSU1 audio if your sd2snes is too quiet (Rev. E-G)"
+                                    .byte 0
+
+; Filesel context menu strings
+text_filesel_selected_file                          .text "Selected file"
+                                                    .byte 0
+text_filesel_context_add_to_favorites               .text "Add to favorites"
+                                                    .byte 0
+mdesc_filesel_context_add_to_favorites              .text "Add the selected file to favorites"
+                                                    .byte 0
+text_filesel_favorites_context_remove_from_favorites .text "Remove from favorites"
+                                                    .byte 0
+mdesc_filesel_favorites_context_remove_from_favorites .text "Remove the selected file from favorites"
+                                                    .byte 0
+
+; Option value strings
+text_on_p1      .text "On: P1"
+                .byte 0
+text_on_p2      .text "On: P2"
+                .byte 0
+text_on         .text "On"
+                .byte 0
+text_off        .text "Off"
+                .byte 0
+text_enabled    .text "Enabled"
+                .byte 0
+text_disabled   .text "Disabled"
+                .byte 0
+text_normal     .text "Normal"
+                .byte 0
+text_fast       .text "Fast"
+                .byte 0
+text_rtc        .text "Real-time"
+                .byte 0
+text_custom     .text "Custom"
+                .byte 0
+text_yes        .text "Yes"
+                .byte 0
+text_no         .text "No"
+                .byte 0
+text_50Hz       .text "50Hz"
+                .byte 0
+text_60Hz       .text "60Hz"
+                .byte 0
+text_auto       .text "Auto"
+                .byte 0
+text_pal        .text "PAL"
+                .byte 0
+text_ntsc       .text "NTSC"
+                .byte 0
+
+; Time duration strings
+text_1min       .text "1 min"
+                .byte 0
+text_2min       .text "2 mins"
+                .byte 0
+text_3min       .text "3 mins"
+                .byte 0
+text_4min       .text "4 mins"
+                .byte 0
+text_5min       .text "5 mins"
+                .byte 0
+text_10min      .text "10 mins"
+                .byte 0
+text_15min      .text "15 mins"
+                .byte 0
+text_20min      .text "20 mins"
+                .byte 0
+text_30min      .text "30 mins"
+                .byte 0
+text_45min      .text "45 mins"
+                .byte 0
+text_60min      .text "1 hour"
+                .byte 0
+
+; Brightness offset strings
+text_minus1     .text "-1"
+                .byte 0
+text_minus2     .text "-2"
+                .byte 0
+text_minus3     .text "-3"
+                .byte 0
+text_minus4     .text "-4"
+                .byte 0
+text_minus5     .text "-5"
+                .byte 0
+text_minus6     .text "-6"
+                .byte 0
+text_minus7     .text "-7"
+                .byte 0
+
+; LED brightness number strings
+text_1          .text "1"
+                .byte 0
+text_2          .text "2"
+                .byte 0
+text_3          .text "3"
+                .byte 0
+text_4          .text "4"
+                .byte 0
+text_5          .text "5"
+                .byte 0
+text_6          .text "6"
+                .byte 0
+text_7          .text "7"
+                .byte 0
+text_8          .text "8"
+                .byte 0
+text_9          .text "9"
+                .byte 0
+text_10         .text "10"
+                .byte 0
+text_11         .text "11"
+                .byte 0
+text_12         .text "12"
+                .byte 0
+text_13         .text "13"
+                .byte 0
+text_14         .text "14"
+                .byte 0
+text_15_max     .text "15 (max)"
+                .byte 0
+
+; Volume boost strings
+text_3_5db      .text "+3.5dBFS"
+                .byte 0
+text_6db        .text "+6dBFS"
+                .byte 0
+text_9_5db      .text "+9.5dBFS"
+                .byte 0
+text_12db       .text "+12dBFS"
+                .byte 0
+
+; SGB clock strings
+text_sgb_clock1 .text "SGB1: 4.295 MHz"
+                .byte 0
+text_sgb_clock2 .text "SGB2: 4.194 MHz"
+                .byte 0
+
+; System info string (template filled in at runtime)
+text_system     .text "CPU/PPU1/PPU2: a/b/c        VMode: x0Hz"
+                .byte 0
+
+; Misc
+rootdir         .text "/"
+                .byte 0
+
+; =============================================
 ; Ball sprite tile data (8x8, 4bpp = 32 bytes)
 ; Simple filled circle pattern
 ; =============================================

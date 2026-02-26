@@ -1507,24 +1507,14 @@ _filesel_request_filelist_wait_mcu
 
 ; =============================================
 ; Stubs for unported modules
-; Will be replaced when menu.a65 and spcplay.a65 are ported.
 ; =============================================
 
 spcplayer
   .databank 0
   rts
 
-mainmenu
-  .databank 0
-  rts
-
-filesel_contextmenu_file
-  .databank 0
-  rts
-
-filesel_favorites_contextmenu
-  .databank 0
-  rts
+; mainmenu, filesel_contextmenu_file, filesel_favorites_contextmenu
+; are now in menu.a65
 
 ; =============================================
 ; menu_select / menu_select_noinit

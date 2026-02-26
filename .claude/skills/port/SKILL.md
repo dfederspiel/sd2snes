@@ -312,6 +312,103 @@ Low WRAM ($7E:0000-$7E:00FF) must be DMA-cleared at boot. Uninitialized bar_xl/b
 ### VRAM must be explicitly cleared
 Unlike snescom which may have implicit clearing, 64tass builds need explicit DMA fills to zero VRAM regions. Random tile data renders as garbage characters.
 
+### AllocStack → WRAM locals: recursion needs manual save/restore (CRITICAL)
+snescom's `AllocStack` creates a new stack frame per call, so recursive functions like `show_menu` get isolated locals automatically. In 64tass, we replace AllocStack with WRAM variables — but these are shared globals, so recursive calls overwrite the parent's values.
+
+**Solution**: Save WRAM locals to the hardware stack before the recursive call, restore after. Use the `PushMenuLocals` / `PopMenuLocals` macros in menu.a65 to enforce correct order and width.
+
+**LIFO cleanliness rule**: Any register you intend to restore with `pl?` must be the **last thing pushed** before the bracketed call. Either:
+- Save locals → `phy` → call → `ply` → restore locals, or
+- `phy` → call → `ply` with nothing else pushed between.
+
+If locals sit between `phy` and `ply`, the `ply` pops wrong data:
+```asm
+; WRONG — ply pops saved locals instead of Y:
+phy
+  lda sm_numentries : pha    ; 7 bytes between phy and ply!
+  jsr push_window
+ply                          ; BUG: pops sm_menu_ptr bytes, not Y
+
+; CORRECT — locals below Y on stack, bracket is clean:
+PushMenuLocals               ; save locals first (enforces .as/.al widths)
+phy                          ; then push Y
+  jsr push_window
+ply                          ; correctly pops Y
+; ... recursive call ...
+PopMenuLocals                ; restore locals (enforces matching widths)
+```
+
+**Width trap**: `pha`/`pla` push/pop 1 byte in `.as` and 2 bytes in `.al`. All save/restore blocks must enforce the same A width on save and restore. The macros handle this — if writing by hand, always `sep #$20` before 1-byte locals and `rep #$20` before 2-byte locals.
+
+### `#<label` low-byte operator in 16-bit register loads (CRITICAL)
+In 64tass, `<` is the low-byte operator (bits 0-7). The expression `#<label & $ffff` parses as `(<label) & $ffff` = just the low byte, NOT the full 16-bit address. This is different from snescom's `#^label` / `#!label` convention.
+
+**Symptom**: 16-bit register X or Y gets `$00xx` instead of the correct `$xxxx` address. Pointers are wrong, menu structures read garbage, windows are mis-sized.
+
+**Fix**: For 16-bit address loads, use explicit parentheses — no `<`:
+```asm
+; WRONG — loads only low byte:
+ldx #<menu_enttab_mm & $ffff    ; X = $00xx
+
+; CORRECT — loads full 16-bit address (parens for clarity):
+ldx #((menu_enttab_mm) & $ffff) ; X = $xxxx
+```
+
+For bank byte loads, use the same parenthesized style for consistency:
+```asm
+lda #((label >> 16) & $ff)      ; bank byte — unambiguous
+```
+
+### Stack parameter offsets shift when extra pushes are added
+When converting functions that pass parameters on the stack, any extra `phb`/`pha` between the parameter pushes and the `jsr` call shifts all stack-relative offsets.
+
+**Example**: `_show_menu_entries` pushes max_lbl_len and max_opt_len, then does `phb` to switch DBR before `jsr menu_print_entries`. The extra `phb` adds 1 byte, so inside `menu_print_entries`:
+```asm
+; Without phb: P_MAX_OPT_LEN = 3, P_MAX_LBL_LEN = 4
+; With phb:    P_MAX_OPT_LEN = 4, P_MAX_LBL_LEN = 5
+;              (each offset +1 for the extra byte on stack)
+```
+
+**Rule**: Count ALL bytes on the stack between `jsr` and the parameters. Return address (2) + any intervening pushes = base offset. Whenever a function pushes additional bytes before `jsr`, update the callee's `P_*` offset constants. Consider passing via registers or WRAM instead of stack params when the offset math gets fragile.
+
+### Processor mode mismatch across subroutine returns (CRITICAL)
+When a called function changes processor mode (.as↔.al, .xs↔.xl) and returns without restoring it, the assembler's tracked state diverges from the actual CPU state. The assembler generates wrong-sized immediates.
+
+**Example**: `menu_print_opt_string` starts with `sep #$20 / .as` and returns in `.as` mode. The caller's assembler state still says `.al`, so `adc #MENU_ENTRY_SIZE` generates a 3-byte immediate. But the CPU is in 8-bit mode and reads only 2 bytes — the stray `$00` executes as BRK → crash.
+
+**Rule**: Every subroutine must either **(A)** preserve M/X flags on return (via `php`/`plp`), or **(B)** document the mode it returns in. Callers must then `rep`/`sep` + `.al`/`.as`/`.xl`/`.xs` accordingly. This applies to **both** A width and X/Y width — people fix A and forget indexes.
+
+```asm
+jsr menu_print_opt_string    ; returns in .as mode (documented)
+rep #$20                     ; explicitly restore 16-bit A
+.al                          ; tell assembler
+txa
+clc
+adc #MENU_ENTRY_SIZE         ; now correctly generates 3-byte immediate
+```
+
+### `.databank ?` rejects literal address offsets
+With `.databank ?`, 64tass errors on absolute-mode literal addresses like `lda $0001, x` — it can't validate the bank. With `.databank $C0`, small addresses ($0000-$00FF) still fail because they look like DP.
+
+**Fix**: Use `.databank 0` (lie) for functions where DBR = menu bank at runtime but you need `$N,x` indexed access to menu structures. Bank $00 has WRAM labels covering the low address range, so 64tass accepts the addresses. The machine code is identical — `.databank` only affects assembler validation, not output.
+
+**Warning**: `.databank 0` can hide real bugs if DBR is not what you expect at runtime. Only use it when the invariant is documented: "DBR = menu bank when executing these indexed reads."
+
+Toggle `.dpage ?` around the indexed access to force absolute mode (prevent DP optimization):
+```asm
+.databank 0    ; invariant: DBR = menu bank at runtime
+.dpage ?
+lda $0001, x         ; forced to absolute indexed mode
+lda $0007, x
+.dpage 0              ; restore for normal DP access
+```
+
+### PHA/PLA symmetry depends on A width
+`pha`/`pla` push/pop 1 byte in `.as` and 2 bytes in `.al`. If a save block pushes in `.as` but the restore pops in `.al` (or vice versa), the stack silently misaligns. Every save/restore sequence must enforce matching widths — use `sep #$20` / `rep #$20` explicitly around each group rather than relying on inherited state.
+
+### NMI stack budget assumption
+NMI and IRQ handlers push to the same hardware stack as menu recursion and save/restore sequences. The system is safe because: (1) the NMI handler has a bounded, fixed stack budget (no recursion), and (2) menu recursion depth is bounded by the menu structure (max ~3 levels). If either assumption changes, audit stack depth.
+
 ## Port Status
 
 ### Milestone 1 — Boot to screen (COMPLETE)
@@ -346,7 +443,7 @@ Unlike snescom which may have implicit clearing, 64tass builds need explicit DMA
 | data.i65 | Expanded | Window, list selector, filesel WRAM vars |
 | const.a65 | Expanded | Window frame chars, space64, loading data |
 
-### Milestone 4 — File browser + MCU (IN PROGRESS)
+### Milestone 4 — File browser + MCU (COMPLETE)
 | File | Status | Notes |
 |------|--------|-------|
 | filesel.a65 | Done | Full file browser: init, loop, dir rendering, nav, MCU comms |
@@ -355,4 +452,13 @@ Unlike snescom which may have implicit clearing, 64tass builds need explicit DMA
 | data.i65 | Expanded | Time/RTC vars ($02A0-$02B0), work vars, infloop, mm_tmp/sel |
 | const.a65 | Expanded | Clock dialog strings/dims, text_ellipse |
 | menu_select | Done | Ported into filesel.a65 (Mode 7 multiply, selection loop) |
-| Stubs remaining | — | spcplayer, mainmenu, filesel_contextmenu_file, filesel_favorites_contextmenu |
+
+### Milestone 5 — Menu system (IN PROGRESS)
+| File | Status | Notes |
+|------|--------|-------|
+| menu.a65 | Done | Full menu system: show_menu (recursive), measure, print, edit_value, all dialog types |
+| menudata.a65 | Done | All menu tables: main, config, BSX, browser, chip, SGB, in-game, savestates, SCIC |
+| sysinfo.a65 | Done | System info display |
+| data.i65 | Expanded | Menu WRAM vars: sm_*, menu_val_ptr, menu_aux_ptr, mev_*, mpos_* |
+| Known issues | — | Config value editing not yet working (under investigation) |
+| Stubs remaining | — | spcplayer |

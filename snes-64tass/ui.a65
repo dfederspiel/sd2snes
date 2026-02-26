@@ -220,12 +220,17 @@ right_align
 ; =============================================
 set_bar_color
   php
+  phb
     sep #$30
     .as
     .xs
     asl a
     asl a
     tax
+    lda #$00
+    pha
+    plb
+    .databank 0
     lda hdma_bar_color_src,x
     sta hdma_math+2
     lda hdma_bar_color_src+1,x
@@ -234,6 +239,7 @@ set_bar_color
     sta hdma_math+8
     lda hdma_bar_color_src+3,x
     sta hdma_math+11
+  plb
   plp
   rts
 

@@ -972,8 +972,12 @@ printtime
   .databank 0
   .dpage 0
   php
+  phb
   sep #$20
   .as
+  lda #$00
+  pha
+  plb                    ; DBR = $00 (needed for gettime SRTC access)
   rep #$10
   .xl
   jsr gettime
@@ -992,6 +996,7 @@ printtime
   stx print_src
   stz print_pal
   jsr hiprint
+  plb
   plp
   rts
 

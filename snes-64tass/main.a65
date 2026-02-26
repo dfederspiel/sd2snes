@@ -736,17 +736,23 @@ snes_init
 ; Requires: DBR = $00
 ; =============================================
 waitblank
-  .databank 0
-  sep #$20
+  php
+  phb
+  sep #$30
   .as
+  .xs
+  lda #$00
+  pha
+  plb
+  .databank 0
   ; Wait for NOT in VBlank first
 - lda $4212
-  and #$80
-  bne -
+  bmi -
   ; Now wait for VBlank to start
 - lda $4212
-  and #$80
-  beq -
+  bpl -
+  plb
+  plp
   rts
 
 
@@ -1199,6 +1205,9 @@ nmihook
 .include "pad.a65"
 .include "filesel.a65"
 .include "time.a65"
+.include "menu.a65"
+.include "menudata.a65"
+.include "sysinfo.a65"
 .include "dma.a65"
 .include "font.a65"
 .include "palette.a65"

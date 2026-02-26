@@ -237,8 +237,46 @@ time_work_x    = $02B4  ; .byte - dialog X position
 time_work_y    = $02B5  ; .byte - dialog Y position
 
 ; =============================================
-; Misc WRAM variables ($02B6-$02B9)
+; System info text buffer ($02B6-$02DD, 40 bytes)
 ; =============================================
-infloop  = $02B6  ; 2 bytes - filled with $80 $FE (BRA self) at boot
-mm_tmp   = $02B8  ; .byte - main menu scratch
-mm_sel   = $02B9  ; .byte - main menu selection
+snes_system_config = $02B6  ; 40 bytes - copy of text_system, filled by sysinfo
+
+; =============================================
+; Menu system variables ($0013-$002F, $00F6-$00FE)
+;
+; These MUST be in the DP range ($00-$FF) so they can be
+; accessed via direct page mode regardless of DBR setting.
+; Menu code runs with DBR = menu bank ($C0) where absolute
+; addressing would hit ROM, not WRAM. DP mode always hits
+; bank $00 (WRAM mirror) regardless of DBR.
+; =============================================
+
+; show_menu locals ($0013-$0016) — saved/restored for recursion
+sm_numentries  = $0013  ; .byte - number of entries in current menu
+sm_max_lbl_len = $0014  ; .byte - max label width
+sm_max_opt_len = $0015  ; .byte - max option value width
+sm_title_len   = $0016  ; .byte - window title length
+
+; menu_edit_value / value dialog vars ($0028-$002F)
+mev_work_value = $0028  ; .word - edit dialog current value
+mev_value_len  = $002A  ; .byte - edit dialog value display length
+mev_text_grey  = $002B  ; .byte - edit dialog greyed out flag
+mev_chgfunc_ptr = $002C ; 3 bytes - change hook function pointer (addr-1)
+
+; menu_print_opt_string / shared vars ($0035-$003D)
+mev_label_addr = $0035  ; .word - kv8 dialog label address
+mpos_kvpar_data = $0037 ; .word - current kv value
+mpos_kvtab_ptr = $0039  ; 3 bytes - kv table pointer
+
+; Indirect-long pointers ($00F6-$00FE)
+; Used with [ptr] and [ptr],y addressing — require DP range
+sm_menu_ptr    = $00F6  ; 3 bytes - show_menu: current menu structure
+menu_val_ptr   = $00F9  ; 3 bytes - entry value / edit value pointer
+menu_aux_ptr   = $00FC  ; 3 bytes - kv parameter / preset range pointer
+
+; =============================================
+; Misc WRAM variables ($02DE-$02E1)
+; =============================================
+infloop  = $02DE  ; 2 bytes - filled with $80 $FE (BRA self) at boot
+mm_tmp   = $02E0  ; .byte - main menu scratch
+mm_sel   = $02E1  ; .byte - main menu selection

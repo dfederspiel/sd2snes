@@ -1,0 +1,1031 @@
+; menudata.a65 - Menu entry tables and key-value tables (64tass port)
+;
+; Menu entry structure (23 bytes per entry):
+;   1 byte   entry type
+;   3 bytes  long pointer to menu entry text
+;   3 bytes  long pointer to routine / submenu / preset table
+;   1 byte   data type of parameter (OPTTYPE_*)
+;   3 bytes  long pointer to parameter value
+;   3 bytes  long pointer to text description
+;   3 bytes  long pointer to change-hook function (addr-1)
+;   3 bytes  long pointer to post-hook function (addr-1)
+;   3 bytes  long pointer to isEnabled function (addr-1)
+
+
+; =============================================
+; Main Menu
+; =============================================
+menu_enttab_mm
+  .byte 1
+  .word (text_mainmenu) & $ffff
+  .byte (text_mainmenu) >> 16
+
+  .byte MTYPE_FUNC
+  .word (text_mm_last) & $ffff
+  .byte (text_mm_last) >> 16
+  .word (select_last_file - 1) & $ffff
+  .byte (select_last_file - 1) >> 16
+  .byte 0
+  .byte 0, 0, 0
+  .word (mdesc_mm_last) & $ffff
+  .byte (mdesc_mm_last) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_FUNC
+  .word (text_mm_favorites) & $ffff
+  .byte (text_mm_favorites) >> 16
+  .word (select_favorite_file - 1) & $ffff
+  .byte (select_favorite_file - 1) >> 16
+  .byte 0
+  .byte 0, 0, 0
+  .word (mdesc_mm_favorites) & $ffff
+  .byte (mdesc_mm_favorites) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_FUNC
+  .word (mtext_mm_sysinfo) & $ffff
+  .byte (mtext_mm_sysinfo) >> 16
+  .word (show_sysinfo - 1) & $ffff
+  .byte (show_sysinfo - 1) >> 16
+  .byte 0
+  .byte 0, 0, 0
+  .word (mdesc_mm_sysinfo) & $ffff
+  .byte (mdesc_mm_sysinfo) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_SUBMENU
+  .word (mtext_mm_cfg) & $ffff
+  .byte (mtext_mm_cfg) >> 16
+  .word (menu_enttab_cfg) & $ffff
+  .byte (menu_enttab_cfg) >> 16
+  .byte 0
+  .byte 0, 0, 0
+  .word (mdesc_mm_cfg) & $ffff
+  .byte (mdesc_mm_cfg) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte 0
+
+; =============================================
+; Configuration submenu
+; =============================================
+menu_enttab_cfg
+  .byte 1
+  .word (mtext_mm_cfg) & $ffff
+  .byte (mtext_mm_cfg) >> 16
+
+  .byte MTYPE_FUNC
+  .word (mtext_cfg_time) & $ffff
+  .byte (mtext_cfg_time) >> 16
+  .word (rtc_init - 1) & $ffff
+  .byte (rtc_init - 1) >> 16
+  .byte 0
+  .byte 0, 0, 0
+  .word (mdesc_cfg_time) & $ffff
+  .byte (mdesc_cfg_time) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_SUBMENU
+  .word (mtext_cfg_bsx) & $ffff
+  .byte (mtext_cfg_bsx) >> 16
+  .word (menu_enttab_bsx) & $ffff
+  .byte (menu_enttab_bsx) >> 16
+  .byte 0
+  .byte 0, 0, 0
+  .word (mdesc_cfg_bsx) & $ffff
+  .byte (mdesc_cfg_bsx) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_SUBMENU
+  .word (mtext_cfg_browser) & $ffff
+  .byte (mtext_cfg_browser) >> 16
+  .word (menu_enttab_browser) & $ffff
+  .byte (menu_enttab_browser) >> 16
+  .byte 0
+  .byte 0, 0, 0
+  .word (mdesc_cfg_browser) & $ffff
+  .byte (mdesc_cfg_browser) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_SUBMENU
+  .word (mtext_cfg_chip) & $ffff
+  .byte (mtext_cfg_chip) >> 16
+  .word (menu_enttab_chip) & $ffff
+  .byte (menu_enttab_chip) >> 16
+  .byte 0
+  .byte 0, 0, 0
+  .word (mdesc_cfg_chip) & $ffff
+  .byte (mdesc_cfg_chip) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_SUBMENU
+  .word (mtext_cfg_sgb) & $ffff
+  .byte (mtext_cfg_sgb) >> 16
+  .word (menu_enttab_sgb) & $ffff
+  .byte (menu_enttab_sgb) >> 16
+  .byte 0
+  .byte 0, 0, 0
+  .word (mdesc_cfg_sgb) & $ffff
+  .byte (mdesc_cfg_sgb) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_SUBMENU
+  .word (mtext_cfg_ingame) & $ffff
+  .byte (mtext_cfg_ingame) >> 16
+  .word (menu_enttab_ingame) & $ffff
+  .byte (menu_enttab_ingame) >> 16
+  .byte 0
+  .byte 0, 0, 0
+  .word (mdesc_cfg_ingame) & $ffff
+  .byte (mdesc_cfg_ingame) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_SUBMENU
+  .word (mtext_cfg_savestates) & $ffff
+  .byte (mtext_cfg_savestates) >> 16
+  .word (menu_enttab_savestates) & $ffff
+  .byte (menu_enttab_savestates) >> 16
+  .byte 0
+  .byte 0, 0, 0
+  .word (mdesc_cfg_savestates) & $ffff
+  .byte (mdesc_cfg_savestates) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_SUBMENU
+  .word (mtext_cfg_scic) & $ffff
+  .byte (mtext_cfg_scic) >> 16
+  .word (menu_enttab_scic) & $ffff
+  .byte (menu_enttab_scic) >> 16
+  .byte 0
+  .byte 0, 0, 0
+  .word (mdesc_cfg_scic) & $ffff
+  .byte (mdesc_cfg_scic) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte 0
+
+; =============================================
+; BS-X Settings submenu
+; =============================================
+menu_enttab_bsx
+  .byte 1
+  .word (mtext_cfg_bsx) & $ffff
+  .byte (mtext_cfg_bsx) >> 16
+
+  .byte MTYPE_VALUE
+  .word (mtext_bsx_timesource) & $ffff
+  .byte (mtext_bsx_timesource) >> 16
+  .word (kv_bsx_timesource) & $ffff
+  .byte (kv_bsx_timesource) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_BSX_USE_USERTIME) & $ffff
+  .byte (CFG_BSX_USE_USERTIME) >> 16
+  .word (mdesc_bsx_timesource) & $ffff
+  .byte (mdesc_bsx_timesource) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_bsx_time) & $ffff
+  .byte (mtext_bsx_time) >> 16
+  .byte 0, 0, 0
+  .byte OPTTYPE_TIME
+  .word (CFG_BSX_TIME) & $ffff
+  .byte (CFG_BSX_TIME) >> 16
+  .word (mdesc_bsx_time) & $ffff
+  .byte (mdesc_bsx_time) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte 0
+
+; =============================================
+; Browser Settings submenu
+; =============================================
+menu_enttab_browser
+  .byte 1
+  .word (mtext_cfg_browser) & $ffff
+  .byte (mtext_cfg_browser) >> 16
+
+  .byte MTYPE_VALUE
+  .word (mtext_browser_sort) & $ffff
+  .byte (mtext_browser_sort) >> 16
+  .word (kv_yesno) & $ffff
+  .byte (kv_yesno) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_SORT_DIRECTORIES) & $ffff
+  .byte (CFG_SORT_DIRECTORIES) >> 16
+  .word (mdesc_browser_sort) & $ffff
+  .byte (mdesc_browser_sort) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_browser_hide_ext) & $ffff
+  .byte (mtext_browser_hide_ext) >> 16
+  .word (kv_yesno) & $ffff
+  .byte (kv_yesno) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_HIDE_EXTENSIONS) & $ffff
+  .byte (CFG_HIDE_EXTENSIONS) >> 16
+  .word (mdesc_browser_hide_ext) & $ffff
+  .byte (mdesc_browser_hide_ext) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_browser_screensaver) & $ffff
+  .byte (mtext_browser_screensaver) >> 16
+  .word (kv_onoff) & $ffff
+  .byte (kv_onoff) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_ENABLE_SCREENSAVER) & $ffff
+  .byte (CFG_ENABLE_SCREENSAVER) >> 16
+  .word (mdesc_browser_screensaver) & $ffff
+  .byte (mdesc_browser_screensaver) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_browser_ledbright) & $ffff
+  .byte (mtext_browser_ledbright) >> 16
+  .word (kv_led_bright) & $ffff
+  .byte (kv_led_bright) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_LED_BRIGHTNESS) & $ffff
+  .byte (CFG_LED_BRIGHTNESS) >> 16
+  .word (mdesc_browser_ledbright) & $ffff
+  .byte (mdesc_browser_ledbright) >> 16
+  .word (mfunc_chg_ledbright - 1) & $ffff
+  .byte (mfunc_chg_ledbright - 1) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte 0
+
+; =============================================
+; Chip Options submenu
+; =============================================
+menu_enttab_chip
+  .byte 1
+  .word (mtext_cfg_chip) & $ffff
+  .byte (mtext_cfg_chip) >> 16
+
+  .byte MTYPE_VALUE
+  .word (mtext_chip_cx4_speed) & $ffff
+  .byte (mtext_chip_cx4_speed) >> 16
+  .word (kv_cx4_speed) & $ffff
+  .byte (kv_cx4_speed) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_CX4_SPEED) & $ffff
+  .byte (CFG_CX4_SPEED) >> 16
+  .word (mdesc_chip_cx4_speed) & $ffff
+  .byte (mdesc_chip_cx4_speed) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_chip_gsu_speed) & $ffff
+  .byte (mtext_chip_gsu_speed) >> 16
+  .word (kv_gsu_speed) & $ffff
+  .byte (kv_gsu_speed) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_GSU_SPEED) & $ffff
+  .byte (CFG_GSU_SPEED) >> 16
+  .word (mdesc_chip_gsu_speed) & $ffff
+  .byte (mdesc_chip_gsu_speed) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_chip_msu1_volume_boost) & $ffff
+  .byte (mtext_chip_msu1_volume_boost) >> 16
+  .word (kv_volume_boost) & $ffff
+  .byte (kv_volume_boost) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_MSU_VOLUME_BOOST) & $ffff
+  .byte (CFG_MSU_VOLUME_BOOST) >> 16
+  .word (mdesc_chip_msu1_volume_boost) & $ffff
+  .byte (mdesc_chip_msu1_volume_boost) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte 0
+
+; =============================================
+; SGB Settings submenu
+; =============================================
+menu_enttab_sgb
+  .byte 1
+  .word (mtext_cfg_sgb) & $ffff
+  .byte (mtext_cfg_sgb) >> 16
+
+  .byte MTYPE_VALUE
+  .word (mtext_sgb_enable_hooks) & $ffff
+  .byte (mtext_sgb_enable_hooks) >> 16
+  .word (kv_onoff) & $ffff
+  .byte (kv_onoff) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_SGB_ENABLE_INGAMEHOOK) & $ffff
+  .byte (CFG_SGB_ENABLE_INGAMEHOOK) >> 16
+  .word (mdesc_sgb_enable_hooks) & $ffff
+  .byte (mdesc_sgb_enable_hooks) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_sgb_enable_state) & $ffff
+  .byte (mtext_sgb_enable_state) >> 16
+  .word (kv_onoff) & $ffff
+  .byte (kv_onoff) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_SGB_ENABLE_STATE) & $ffff
+  .byte (CFG_SGB_ENABLE_STATE) >> 16
+  .word (mdesc_sgb_enable_state) & $ffff
+  .byte (mdesc_sgb_enable_state) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_sgb_enh_override) & $ffff
+  .byte (mtext_sgb_enh_override) >> 16
+  .word (kv_enabledisable) & $ffff
+  .byte (kv_enabledisable) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_SGB_ENH_OVERRIDE) & $ffff
+  .byte (CFG_SGB_ENH_OVERRIDE) >> 16
+  .word (mdesc_sgb_enh_override) & $ffff
+  .byte (mdesc_sgb_enh_override) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_sgb_spr_increase) & $ffff
+  .byte (mtext_sgb_spr_increase) >> 16
+  .word (kv_onoff) & $ffff
+  .byte (kv_onoff) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_SGB_SPR_INCREASE) & $ffff
+  .byte (CFG_SGB_SPR_INCREASE) >> 16
+  .word (mdesc_sgb_spr_increase) & $ffff
+  .byte (mdesc_sgb_spr_increase) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_sgb_clock) & $ffff
+  .byte (mtext_sgb_clock) >> 16
+  .word (kv_sgb_clock) & $ffff
+  .byte (kv_sgb_clock) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_SGB_CLOCK_FIX) & $ffff
+  .byte (CFG_SGB_CLOCK_FIX) >> 16
+  .word (mdesc_sgb_clock) & $ffff
+  .byte (mdesc_sgb_clock) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_sgb_volume_boost) & $ffff
+  .byte (mtext_sgb_volume_boost) >> 16
+  .word (kv_volume_boost) & $ffff
+  .byte (kv_volume_boost) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_SGB_VOLUME_BOOST) & $ffff
+  .byte (CFG_SGB_VOLUME_BOOST) >> 16
+  .word (mdesc_sgb_volume_boost) & $ffff
+  .byte (mdesc_sgb_volume_boost) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_sgb_bios) & $ffff
+  .byte (mtext_sgb_bios) >> 16
+  .word (opt_1_to_2) & $ffff
+  .byte (opt_1_to_2) >> 16
+  .byte OPTTYPE_BYTE
+  .word (CFG_SGB_BIOS_VERSION) & $ffff
+  .byte (CFG_SGB_BIOS_VERSION) >> 16
+  .word (mdesc_sgb_bios) & $ffff
+  .byte (mdesc_sgb_bios) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte 0
+
+; =============================================
+; In-game Settings submenu
+; =============================================
+menu_enttab_ingame
+  .byte 1
+  .word (mtext_cfg_ingame) & $ffff
+  .byte (mtext_cfg_ingame) >> 16
+
+  .byte MTYPE_VALUE
+  .word (mtext_ingame_autosave) & $ffff
+  .byte (mtext_ingame_autosave) >> 16
+  .word (kv_onoff) & $ffff
+  .byte (kv_onoff) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_ENABLE_AUTOSAVE) & $ffff
+  .byte (CFG_ENABLE_AUTOSAVE) >> 16
+  .word (mdesc_ingame_autosave) & $ffff
+  .byte (mdesc_ingame_autosave) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_ingame_autosave_msu1) & $ffff
+  .byte (mtext_ingame_autosave_msu1) >> 16
+  .word (kv_onoff) & $ffff
+  .byte (kv_onoff) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_ENABLE_AUTOSAVE_MSU1) & $ffff
+  .byte (CFG_ENABLE_AUTOSAVE_MSU1) >> 16
+  .word (mdesc_ingame_autosave_msu1) & $ffff
+  .byte (mdesc_ingame_autosave_msu1) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .word (mfunc_isenabled_autosave - 1) & $ffff
+  .byte (mfunc_isenabled_autosave - 1) >> 16
+
+  .byte MTYPE_VALUE
+  .word (mtext_ingame_cheats) & $ffff
+  .byte (mtext_ingame_cheats) >> 16
+  .word (kv_yesno) & $ffff
+  .byte (kv_yesno) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_ENABLE_CHEATS) & $ffff
+  .byte (CFG_ENABLE_CHEATS) >> 16
+  .word (mdesc_ingame_cheats) & $ffff
+  .byte (mdesc_ingame_cheats) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_ingame_shortreset) & $ffff
+  .byte (mtext_ingame_shortreset) >> 16
+  .word (kv_onoff) & $ffff
+  .byte (kv_onoff) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_ENABLE_RST_TO_MENU) & $ffff
+  .byte (CFG_ENABLE_RST_TO_MENU) >> 16
+  .word (mdesc_ingame_shortreset) & $ffff
+  .byte (mdesc_ingame_shortreset) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_ingame_enable) & $ffff
+  .byte (mtext_ingame_enable) >> 16
+  .word (kv_onoff) & $ffff
+  .byte (kv_onoff) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_ENABLE_INGAME_HOOK) & $ffff
+  .byte (CFG_ENABLE_INGAME_HOOK) >> 16
+  .word (mdesc_ingame_enable) & $ffff
+  .byte (mdesc_ingame_enable) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_ingame_buttons) & $ffff
+  .byte (mtext_ingame_buttons) >> 16
+  .word (kv_onoff) & $ffff
+  .byte (kv_onoff) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_ENABLE_INGAME_BUTTONS) & $ffff
+  .byte (CFG_ENABLE_INGAME_BUTTONS) >> 16
+  .word (mdesc_ingame_buttons) & $ffff
+  .byte (mdesc_ingame_buttons) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .word (mfunc_isenabled_hooks - 1) & $ffff
+  .byte (mfunc_isenabled_hooks - 1) >> 16
+
+  .byte MTYPE_VALUE
+  .word (mtext_ingame_holdoff) & $ffff
+  .byte (mtext_ingame_holdoff) >> 16
+  .word (kv_onoff) & $ffff
+  .byte (kv_onoff) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_ENABLE_HOOK_HOLDOFF) & $ffff
+  .byte (CFG_ENABLE_HOOK_HOLDOFF) >> 16
+  .word (mdesc_ingame_holdoff) & $ffff
+  .byte (mdesc_ingame_holdoff) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .word (mfunc_isenabled_hooks - 1) & $ffff
+  .byte (mfunc_isenabled_hooks - 1) >> 16
+
+  .byte MTYPE_VALUE
+  .word (mtext_ingame_regionpatch) & $ffff
+  .byte (mtext_ingame_regionpatch) >> 16
+  .word (kv_onoff) & $ffff
+  .byte (kv_onoff) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_R213F_OVERRIDE) & $ffff
+  .byte (CFG_R213F_OVERRIDE) >> 16
+  .word (mdesc_ingame_regionpatch) & $ffff
+  .byte (mdesc_ingame_regionpatch) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_ingame_1chiptransientfixes) & $ffff
+  .byte (mtext_ingame_1chiptransientfixes) >> 16
+  .word (kv_onoff) & $ffff
+  .byte (kv_onoff) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_1CHIP_TRANSIENT_FIXES) & $ffff
+  .byte (CFG_1CHIP_TRANSIENT_FIXES) >> 16
+  .word (mdesc_ingame_1chiptransientfixes) & $ffff
+  .byte (mdesc_ingame_1chiptransientfixes) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_ingame_brightlimit) & $ffff
+  .byte (mtext_ingame_brightlimit) >> 16
+  .word (kv_bright_limit) & $ffff
+  .byte (kv_bright_limit) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_BRIGHTNESS_LIMIT) & $ffff
+  .byte (CFG_BRIGHTNESS_LIMIT) >> 16
+  .word (mdesc_ingame_brightlimit) & $ffff
+  .byte (mdesc_ingame_brightlimit) >> 16
+  .word (mfunc_chg_brightness - 1) & $ffff
+  .byte (mfunc_chg_brightness - 1) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_ingame_resetpatch) & $ffff
+  .byte (mtext_ingame_resetpatch) >> 16
+  .word (kv_onoff) & $ffff
+  .byte (kv_onoff) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_RESET_PATCH) & $ffff
+  .byte (CFG_RESET_PATCH) >> 16
+  .word (mdesc_ingame_resetpatch) & $ffff
+  .byte (mdesc_ingame_resetpatch) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte 0
+
+; =============================================
+; Savestates Settings submenu
+; =============================================
+menu_enttab_savestates
+  .byte 1
+  .word (mtext_cfg_savestates) & $ffff
+  .byte (mtext_cfg_savestates) >> 16
+
+  .byte MTYPE_VALUE
+  .word (mtext_ingame_savestate) & $ffff
+  .byte (mtext_ingame_savestate) >> 16
+  .word (kv_savestates) & $ffff
+  .byte (kv_savestates) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_ENABLE_INGAME_SAVESTATE) & $ffff
+  .byte (CFG_ENABLE_INGAME_SAVESTATE) >> 16
+  .word (mdesc_ingame_savestate) & $ffff
+  .byte (mdesc_ingame_savestate) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_savestate_slots) & $ffff
+  .byte (mtext_savestate_slots) >> 16
+  .word (kv_onoff) & $ffff
+  .byte (kv_onoff) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_ENABLE_SAVESTATE_SLOTS) & $ffff
+  .byte (CFG_ENABLE_SAVESTATE_SLOTS) >> 16
+  .word (mdesc_savestate_slots) & $ffff
+  .byte (mdesc_savestate_slots) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .word (mfunc_isenabled_savestate - 1) & $ffff
+  .byte (mfunc_isenabled_savestate - 1) >> 16
+
+  .byte MTYPE_VALUE
+  .word (mtext_loadstate_delay) & $ffff
+  .byte (mtext_loadstate_delay) >> 16
+  .word (opt_0_to_30) & $ffff
+  .byte (opt_0_to_30) >> 16
+  .byte OPTTYPE_BYTE
+  .word (CFG_LOADSTATE_DELAY) & $ffff
+  .byte (CFG_LOADSTATE_DELAY) >> 16
+  .word (mdesc_loadstate_delay) & $ffff
+  .byte (mdesc_loadstate_delay) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .word (mfunc_isenabled_savestate - 1) & $ffff
+  .byte (mfunc_isenabled_savestate - 1) >> 16
+
+  .byte 0
+
+; =============================================
+; SuperCIC Settings submenu
+; =============================================
+menu_enttab_scic
+  .byte 1
+  .word (mtext_cfg_scic) & $ffff
+  .byte (mtext_cfg_scic) >> 16
+
+  .byte MTYPE_VALUE
+  .word (mtext_scic_enable) & $ffff
+  .byte (mtext_scic_enable) >> 16
+  .word (kv_yesno) & $ffff
+  .byte (kv_yesno) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_PAIR_MODE_ALLOWED) & $ffff
+  .byte (CFG_PAIR_MODE_ALLOWED) >> 16
+  .word (mdesc_scic_enable) & $ffff
+  .byte (mdesc_scic_enable) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte MTYPE_VALUE
+  .word (mtext_scic_vmode_menu) & $ffff
+  .byte (mtext_scic_vmode_menu) >> 16
+  .word (kv_vmode_noauto) & $ffff
+  .byte (kv_vmode_noauto) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_VIDMODE_MENU) & $ffff
+  .byte (CFG_VIDMODE_MENU) >> 16
+  .word (mdesc_scic_vmode_menu) & $ffff
+  .byte (mdesc_scic_vmode_menu) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .word (mfunc_isenabled_scic - 1) & $ffff
+  .byte (mfunc_isenabled_scic - 1) >> 16
+
+  .byte MTYPE_VALUE
+  .word (mtext_scic_vmode_game) & $ffff
+  .byte (mtext_scic_vmode_game) >> 16
+  .word (kv_vmode) & $ffff
+  .byte (kv_vmode) >> 16
+  .byte OPTTYPE_KVBYTE
+  .word (CFG_VIDMODE_GAME) & $ffff
+  .byte (CFG_VIDMODE_GAME) >> 16
+  .word (mdesc_scic_vmode_game) & $ffff
+  .byte (mdesc_scic_vmode_game) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .word (mfunc_isenabled_scic - 1) & $ffff
+  .byte (mfunc_isenabled_scic - 1) >> 16
+
+  .byte 0
+
+; =============================================
+; File selector context menus
+; =============================================
+menu_enttab_filesel_context_file
+  .byte 1
+  .word (text_filesel_selected_file) & $ffff
+  .byte (text_filesel_selected_file) >> 16
+
+  .byte MTYPE_FUNC_CLOSE
+  .word (text_filesel_context_add_to_favorites) & $ffff
+  .byte (text_filesel_context_add_to_favorites) >> 16
+  .word (add_selected_file_to_favorites - 1) & $ffff
+  .byte (add_selected_file_to_favorites - 1) >> 16
+  .byte 0
+  .byte 0, 0, 0
+  .word (mdesc_filesel_context_add_to_favorites) & $ffff
+  .byte (mdesc_filesel_context_add_to_favorites) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte 0
+
+menu_enttab_filesel_favorites_context
+  .byte 1
+  .word (text_filesel_selected_file) & $ffff
+  .byte (text_filesel_selected_file) >> 16
+
+  .byte MTYPE_FUNC_CLOSE
+  .word (text_filesel_favorites_context_remove_from_favorites) & $ffff
+  .byte (text_filesel_favorites_context_remove_from_favorites) >> 16
+  .word (remove_selected_favorite_file - 1) & $ffff
+  .byte (remove_selected_favorite_file - 1) >> 16
+  .byte 0
+  .byte 0, 0, 0
+  .word (mdesc_filesel_favorites_context_remove_from_favorites) & $ffff
+  .byte (mdesc_filesel_favorites_context_remove_from_favorites) >> 16
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+  .byte 0, 0, 0
+
+  .byte 0
+
+; =============================================
+; Menu hook functions (called via RTL)
+; =============================================
+
+mfunc_isenabled_hooks
+  .databank 0
+  .dpage 0
+  lda CFG_ENABLE_INGAME_HOOK
+  eor #$ff
+  ror a
+  rtl
+
+mfunc_isenabled_savestate
+  .databank 0
+  .dpage 0
+  lda CFG_ENABLE_INGAME_SAVESTATE
+  and CFG_ENABLE_INGAME_HOOK
+  eor #$ff
+  ror a
+  rtl
+
+mfunc_isenabled_scic
+  .databank 0
+  .dpage 0
+  lda CFG_PAIR_MODE_ALLOWED
+  and ST_PAIRMODE
+  eor #$ff
+  ror a
+  rtl
+
+mfunc_isenabled_autosave
+  .databank 0
+  .dpage 0
+  lda CFG_ENABLE_AUTOSAVE
+  eor #$ff
+  ror a
+  rtl
+
+mfunc_chg_brightness
+  .databank 0
+  .dpage 0
+  sta tgt_bright
+  sta bright_limit
+  rtl
+
+mfunc_chg_ledbright
+  .databank 0
+  .dpage 0
+  phb
+    pha
+      lda #$00
+      pha
+      plb                    ; DBR = $00 (MCU_CMD/SNES_CMD need bank $00)
+    pla
+    sta CFG_LED_BRIGHTNESS
+    lda #CMD_LED_BRIGHTNESS
+    rep #$10
+    .xl
+    ldx #$0000
+-   sta MCU_CMD
+    cmp SNES_CMD
+    beq +
+    inx
+    bne -
++
+  plb
+  rtl
+
+; =============================================
+; Key-Value tables
+; =============================================
+
+kv_bsx_timesource
+  .word $0000
+  .word (text_rtc) & $ffff
+  .byte (text_rtc) >> 16
+  .word $0001
+  .word (text_custom) & $ffff
+  .byte (text_custom) >> 16
+  .word $ffff
+
+kv_onoff
+  .word $0000
+  .word (text_off) & $ffff
+  .byte (text_off) >> 16
+  .word $0001
+  .word (text_on) & $ffff
+  .byte (text_on) >> 16
+  .word $ffff
+
+kv_enabledisable
+  .word $0000
+  .word (text_enabled) & $ffff
+  .byte (text_enabled) >> 16
+  .word $0001
+  .word (text_disabled) & $ffff
+  .byte (text_disabled) >> 16
+  .word $ffff
+
+kv_yesno
+  .word $0000
+  .word (text_no) & $ffff
+  .byte (text_no) >> 16
+  .word $0001
+  .word (text_yes) & $ffff
+  .byte (text_yes) >> 16
+  .word $ffff
+
+kv_vmode
+  .word $0002
+  .word (text_auto) & $ffff
+  .byte (text_auto) >> 16
+kv_vmode_noauto
+  .word $0001
+  .word (text_50Hz) & $ffff
+  .byte (text_50Hz) >> 16
+  .word $0000
+  .word (text_60Hz) & $ffff
+  .byte (text_60Hz) >> 16
+  .word $ffff
+
+kv_cx4_speed
+  .word $0000
+  .word (text_normal) & $ffff
+  .byte (text_normal) >> 16
+  .word $0001
+  .word (text_fast) & $ffff
+  .byte (text_fast) >> 16
+  .word $ffff
+
+kv_gsu_speed
+  .word $0000
+  .word (text_normal) & $ffff
+  .byte (text_normal) >> 16
+  .word $0001
+  .word (text_fast) & $ffff
+  .byte (text_fast) >> 16
+  .word $ffff
+
+kv_sgb_clock
+  .word $0000
+  .word (text_sgb_clock1) & $ffff
+  .byte (text_sgb_clock1) >> 16
+  .word $0001
+  .word (text_sgb_clock2) & $ffff
+  .byte (text_sgb_clock2) >> 16
+  .word $ffff
+
+kv_volume_boost
+  .word $0000
+  .word (text_off) & $ffff
+  .byte (text_off) >> 16
+  .word $0001
+  .word (text_3_5db) & $ffff
+  .byte (text_3_5db) >> 16
+  .word $0002
+  .word (text_6db) & $ffff
+  .byte (text_6db) >> 16
+  .word $0003
+  .word (text_9_5db) & $ffff
+  .byte (text_9_5db) >> 16
+  .word $0004
+  .word (text_12db) & $ffff
+  .byte (text_12db) >> 16
+  .word $ffff
+
+kv_bright_limit
+  .word $0008
+  .word (text_minus7) & $ffff
+  .byte (text_minus7) >> 16
+  .word $0009
+  .word (text_minus6) & $ffff
+  .byte (text_minus6) >> 16
+  .word $000a
+  .word (text_minus5) & $ffff
+  .byte (text_minus5) >> 16
+  .word $000b
+  .word (text_minus4) & $ffff
+  .byte (text_minus4) >> 16
+  .word $000c
+  .word (text_minus3) & $ffff
+  .byte (text_minus3) >> 16
+  .word $000d
+  .word (text_minus2) & $ffff
+  .byte (text_minus2) >> 16
+  .word $000e
+  .word (text_minus1) & $ffff
+  .byte (text_minus1) >> 16
+  .word $000f
+  .word (text_off) & $ffff
+  .byte (text_off) >> 16
+  .word $ffff
+
+kv_savestates
+  .word $0000
+  .word (text_off) & $ffff
+  .byte (text_off) >> 16
+  .word $0001
+  .word (text_on) & $ffff
+  .byte (text_on) >> 16
+  .word $ffff
+
+opt_0_to_30
+  .word $0000, $001E
+
+opt_1_to_2
+  .word $0001, $0002
+
+kv_led_bright
+  .word $0000
+  .word (text_off) & $ffff
+  .byte (text_off) >> 16
+  .word $0001
+  .word (text_1) & $ffff
+  .byte (text_1) >> 16
+  .word $0002
+  .word (text_2) & $ffff
+  .byte (text_2) >> 16
+  .word $0003
+  .word (text_3) & $ffff
+  .byte (text_3) >> 16
+  .word $0004
+  .word (text_4) & $ffff
+  .byte (text_4) >> 16
+  .word $0005
+  .word (text_5) & $ffff
+  .byte (text_5) >> 16
+  .word $0006
+  .word (text_6) & $ffff
+  .byte (text_6) >> 16
+  .word $0007
+  .word (text_7) & $ffff
+  .byte (text_7) >> 16
+  .word $0008
+  .word (text_8) & $ffff
+  .byte (text_8) >> 16
+  .word $0009
+  .word (text_9) & $ffff
+  .byte (text_9) >> 16
+  .word $000a
+  .word (text_10) & $ffff
+  .byte (text_10) >> 16
+  .word $000b
+  .word (text_11) & $ffff
+  .byte (text_11) >> 16
+  .word $000c
+  .word (text_12) & $ffff
+  .byte (text_12) >> 16
+  .word $000d
+  .word (text_13) & $ffff
+  .byte (text_13) >> 16
+  .word $000e
+  .word (text_14) & $ffff
+  .byte (text_14) >> 16
+  .word $000f
+  .word (text_15_max) & $ffff
+  .byte (text_15_max) >> 16
+  .word $ffff

@@ -1,0 +1,1706 @@
+; menu.a65 - Menu system (64tass port)
+;
+; Ported from snescom menu.a65. Key differences from original:
+;   - No AllocStack: locals are WRAM vars in DP range ($00-$FF)
+;   - DP always stays at 0; [ptr] indirect long works naturally
+;   - When DBR = menu bank ($C0), use wram() for WRAM access
+;     (long addressing bypasses DBR; DP mode also works for $00-$FF)
+;   - For $N,x menu structure access, toggle .dpage ? to force absolute
+;   - show_menu recursion: save/restore WRAM locals on hardware stack
+
+MENU_NUM_DATA_TYPES = $07
+
+; Long WRAM address — generates LDA/STA long ($AF/$8F) which bypasses DBR.
+; Use in functions where DBR = menu bank (ROM), not bank $00/$80 (WRAM mirror).
+wram .sfunction addr, (addr) + $7E0000
+
+; =============================================
+; PushMenuLocals / PopMenuLocals — save/restore show_menu WRAM locals
+;
+; Used around recursive show_menu calls. Enforces correct A width for
+; each push/pop so stack stays aligned regardless of caller's mode.
+;
+; Layout (7 bytes total):
+;   4 × 1-byte (.as): sm_numentries, sm_max_lbl_len, sm_max_opt_len, sm_title_len
+;   1 × 2-byte (.al): sm_menu_ptr (16-bit address)
+;   1 × 1-byte (.as): sm_menu_ptr+2 (bank)
+; =============================================
+PushMenuLocals .macro
+    sep #$20
+    .as
+    lda sm_numentries
+    pha
+    lda sm_max_lbl_len
+    pha
+    lda sm_max_opt_len
+    pha
+    lda sm_title_len
+    pha
+    rep #$20
+    .al
+    lda sm_menu_ptr
+    pha
+    sep #$20
+    .as
+    lda sm_menu_ptr+2
+    pha
+  .endm
+
+PopMenuLocals .macro
+    sep #$20
+    .as
+    pla
+    sta sm_menu_ptr+2
+    rep #$20
+    .al
+    pla
+    sta sm_menu_ptr
+    sep #$20
+    .as
+    pla
+    sta sm_title_len
+    pla
+    sta sm_max_opt_len
+    pla
+    sta sm_max_lbl_len
+    pla
+    sta sm_numentries
+  .endm
+
+; =============================================
+; mainmenu - Start button main menu
+; =============================================
+mainmenu
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda #$02
+  sta window_x
+  lda #$09
+  sta window_y
+  lda #60
+  sta window_w
+  lda #18
+  sta window_h
+  jsr push_window
+  jsr window_greyout
+  lda #$06
+  sta window_x
+  lda #$0b
+  sta window_y
+  phb
+    lda #<(menu_enttab_mm >> 16)
+    pha
+    plb
+    ldx #menu_enttab_mm & $ffff
+    jsr show_menu
+  plb
+  jsr pop_window
+  rts
+
+; =============================================
+; filesel_contextmenu_file - Y-button context menu on file
+; =============================================
+filesel_contextmenu_file
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda #$02
+  sta window_x
+  lda #$09
+  sta window_y
+  lda #60
+  sta window_w
+  lda #18
+  sta window_h
+  jsr push_window
+  jsr window_greyout
+  lda #$06
+  sta window_x
+  lda #$0b
+  sta window_y
+  phb
+    lda #<(menu_enttab_filesel_context_file >> 16)
+    pha
+    plb
+    ldx #menu_enttab_filesel_context_file & $ffff
+    jsr show_menu
+  plb
+  jsr pop_window
+  rts
+
+; =============================================
+; filesel_favorites_contextmenu - Y-button context menu on favorites
+; =============================================
+filesel_favorites_contextmenu
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda #$02
+  sta window_x
+  lda #$09
+  sta window_y
+  lda #60
+  sta window_w
+  lda #18
+  sta window_h
+  jsr push_window
+  jsr window_greyout
+  lda #$06
+  sta window_x
+  lda #$0b
+  sta window_y
+  phb
+    lda #<(menu_enttab_filesel_favorites_context >> 16)
+    pha
+    plb
+    ldx #menu_enttab_filesel_favorites_context & $ffff
+    jsr show_menu
+  plb
+  jsr pop_window
+  rts
+
+; =============================================
+; show_menu - Recursive menu display and interaction
+;
+; Input:
+;   X = 16-bit address of menu structure
+;   DBR = bank of menu structure
+;
+; WRAM locals (saved/restored for recursion):
+;   sm_numentries  ($13) - number of menu entries
+;   sm_max_lbl_len ($14) - max label string length
+;   sm_max_opt_len ($15) - max option string length
+;   sm_title_len   ($16) - window title string length
+;   sm_menu_ptr    ($F6) - 3-byte menu structure pointer
+; =============================================
+
+show_menu
+  .databank ?
+  .dpage 0
+  ; save caller's DBR as menu bank, store menu address
+  sep #$20
+  .as
+  phb
+  pla
+  sta sm_menu_ptr+2     ; bank byte
+  stx sm_menu_ptr       ; 16-bit address
+  jsr menu_measure      ; determine required window dimensions (DBR=menu bank)
+  sep #$20
+  .as
+  ; Switch to DBR=$80 for the main loop (WRAM mirror for absolute access)
+  lda #$80
+  phb
+    pha
+    plb
+    .databank $80
+    ; Calculate window height: numentries * listsel_step + 3
+    .databank 0           ; lie for assembler validation (I/O mirrored in $80)
+    lda sm_numentries
+    sta $211b
+    stz $211b
+    lda [sm_menu_ptr]     ; listsel_step from menu structure byte 0
+    sta $211c
+    lda $2134             ; hardware multiply result
+    .databank $80
+    sec
+    sbc [sm_menu_ptr]
+    inc a
+    inc a
+    inc a
+    sta window_h
+    ; Calculate window width
+    lda sm_max_lbl_len
+    clc
+    adc sm_max_opt_len
+    cmp sm_title_len
+    bcs +
+    lda sm_title_len
+    inc a
+    inc a
++   clc
+    adc #$04
+    ldx sm_max_opt_len
+    beq +
+    inc a
+    inc a
+    inc a
++   sta window_w
+    jsr push_window
+    ; Set up list selector from menu header
+    lda [sm_menu_ptr]     ; byte 0 = listsel_step
+    sta listsel_step
+    stz listsel_sel
+    ldy #$0001
+    rep #$20
+    .al
+    lda [sm_menu_ptr], y  ; bytes 1-2 = window title address
+    sta window_taddr
+    sep #$20
+    .as
+    iny
+    iny
+    lda [sm_menu_ptr], y  ; byte 3 = window title bank
+    sta window_tbank
+    jsr draw_window
+    jsr _show_menu_entries
+    lda sm_numentries
+    sta listsel_max
+_show_menu_loop
+    stz listsel_pickbutton
+    jsr menu_select_noinit
+    cmp #$ff
+    beq _show_menu_out
+    ; Calculate offset into menu entry table: sel * MENU_ENTRY_SIZE
+    .databank 0           ; lie for assembler validation (I/O mirrored in $80)
+    sta $211b
+    stz $211b
+    lda #MENU_ENTRY_SIZE
+    sta $211c
+    rep #$20
+    .al
+    lda $2134             ; offset = sel * entry_size
+    .databank $80
+    clc
+    adc #$04              ; skip past 4-byte menu header
+    tay
+    ; Read entry type (byte 4 of entry, relative to header-adjusted Y)
+    lda [sm_menu_ptr], y
+    and #$00ff
+    iny                   ; advance Y past type(1) + text_ptr(3) = +4
+    iny
+    iny
+    iny
+    cmp #MTYPE_SUBMENU
+    bne +
+    jmp _show_menu_submenu
++   cmp #MTYPE_FUNC
+    bne +
+    jmp _show_menu_func
++   cmp #MTYPE_FUNC_CLOSE
+    bne +
+    jmp _show_menu_func_close
++   cmp #MTYPE_VALUE
+    bne _show_menu_cont
+    jmp _show_menu_editvalue
+_show_menu_cont
+    sep #$20
+    .as
+    jsr _show_menu_entries
+    jmp _show_menu_loop
+_show_menu_out
+    sep #$20
+    .as
+    jsr pop_window
+  plb
+  .databank ?
+  rts
+
+_show_menu_entries
+  .databank $80
+  .dpage 0
+  php
+  sep #$20
+  .as
+  ; Load WRAM values while DBR=$80 (absolute works for WRAM)
+  ldx sm_menu_ptr
+  lda sm_max_lbl_len
+  pha
+  lda sm_max_opt_len
+  pha
+  phb
+    lda sm_menu_ptr+2
+    pha
+    plb
+    .databank ?
+    ; Advance X past 4-byte menu header
+    inx
+    inx
+    inx
+    inx
+    jsr menu_print_entries
+  plb
+  .databank $80
+  pla     ; discard max_opt_len
+  pla     ; discard max_lbl_len
+  plp
+  rts
+
+_show_menu_submenu
+    .databank $80
+    .al
+    ; Save locals FIRST, then phy/ply bracket around push_window/greyout.
+    #PushMenuLocals             ; 7 bytes on stack, leaves .as
+    rep #$20
+    .al
+    ; Preserve Y (entry offset) across push_window/greyout — clean bracket
+    phy
+      jsr push_window
+      jsr window_greyout
+    ply
+    ; sm_menu_ptr still valid (saved to stack but not yet overwritten in WRAM)
+    lda [sm_menu_ptr], y  ; submenu address
+    tax
+    sep #$20
+    .as
+    lda window_x
+    inc a
+    inc a
+    sta window_x
+    lda window_y
+    inc a
+    sta window_y
+    iny
+    iny
+    lda [sm_menu_ptr], y  ; submenu bank
+    phb
+      pha
+      plb
+      jsr show_menu       ; RECURSIVE CALL
+    plb
+    .databank $80
+    phy
+    jsr pop_window
+    ply
+    #PopMenuLocals              ; restores 7 bytes, leaves .as
+    jmp _show_menu_cont
+
+_show_menu_func
+    .databank $80
+    .al
+    phy
+    jsr push_window
+    jsr window_greyout
+    ply
+    phk
+    per _show_menu_func_cont-1
+    rep #$20
+    .al
+    lda [sm_menu_ptr], y  ; function address
+    tax
+    sep #$20
+    .as
+    iny
+    iny
+    lda [sm_menu_ptr], y  ; function bank
+    pha
+    phx
+    rtl
+_show_menu_func_cont
+    phy
+    jsr pop_window
+    ply
+    jmp _show_menu_cont
+
+_show_menu_func_close
+    .databank $80
+    .al
+    phy
+    jsr push_window
+    jsr window_greyout
+    ply
+    phk
+    per _show_menu_func_close_cont-1
+    rep #$20
+    .al
+    lda [sm_menu_ptr], y
+    tax
+    sep #$20
+    .as
+    iny
+    iny
+    lda [sm_menu_ptr], y
+    pha
+    phx
+    rtl
+_show_menu_func_close_cont
+    phy
+    jsr pop_window
+    ply
+    jmp _show_menu_out
+
+_show_menu_editvalue
+    .databank $80
+    .al
+    phy
+      phb
+        rep #$20
+        .al
+        tya
+        clc
+        adc sm_menu_ptr
+        sec
+        sbc #$0004
+        tax
+        sep #$20
+        .as
+        lda sm_menu_ptr+2
+        pha
+        plb
+        .databank ?
+        jsr menu_edit_value
+      plb
+      .databank $80
+    ply
+    jmp _show_menu_cont
+
+; =============================================
+; menu_measure - Determine required window dimensions
+;
+; Input:
+;   X = address of menu structure, DBR = bank
+;
+; Writes results to WRAM: sm_numentries, sm_max_lbl_len,
+;   sm_max_opt_len, sm_title_len
+; =============================================
+menu_measure
+  .databank 0
+  .dpage 0
+  php
+  rep #$20
+  .al
+  stz sm_numentries       ; DP mode, bank-independent
+  stz sm_max_lbl_len
+  stz sm_max_opt_len
+  ; Get window title length
+  sep #$20
+  .as
+  .dpage $0100
+  ldy $0001, x           ; title address (absolute indexed, DBR-relative)
+  lda $0003, x           ; title bank
+  .dpage 0
+  phb
+    pha
+    plb
+    jsr strlen
+    sty sm_title_len
+  plb
+  .dpage $0100
+  inx
+  inx
+  inx
+  inx                     ; skip past 4-byte menu header
+  rep #$20
+  .al
+_menu_measure_line_loop
+  lda $0000, x           ; entry type
+  .dpage 0
+  and #$00ff
+  beq _menu_measure_out
+  inc sm_numentries
+  ; Get label string length
+  .dpage ?
+  phb
+    sep #$20
+    .as
+    ldy $0001, x         ; entry text address
+    lda $0003, x         ; entry text bank
+    .dpage 0
+    pha
+    plb
+    jsr strlen
+  plb
+  .dpage ?
+  lda $0000, x
+  .dpage 0
+  cmp #MTYPE_SUBMENU
+  bne +
+  iny
+  iny                     ; add 2 for submenu arrow chars
++ rep #$20
+  .al
+  cpy sm_max_lbl_len
+  bmi +
+  sty sm_max_lbl_len
++ jsr menu_meas_opt
+  cmp sm_max_opt_len
+  bmi +
+  sta sm_max_opt_len
++ txa
+  clc
+  adc #MENU_ENTRY_SIZE
+  tax
+  bra _menu_measure_line_loop
+_menu_measure_out
+  plp
+  rts
+
+; =============================================
+; menu_meas_opt - Calculate max option string length for one entry
+;
+; Input: X = address of menu entry, DBR = bank
+; Returns: A = calculated max parameter length (16-bit)
+; =============================================
+menu_meas_opt
+  .databank 0
+  .dpage 0
+  php
+    sep #$20
+    .as
+    .dpage ?
+    lda $0007, x
+    .dpage 0
+    beq _menu_meas_no_set
+    cmp #$01
+    bne _menu_meas_opt_02
+    lda #$03
+    bra _menu_meas_opt_set
+_menu_meas_opt_02
+    cmp #$02
+    bne _menu_meas_opt_03
+    lda #$05
+    bra _menu_meas_opt_set
+_menu_meas_opt_03
+    cmp #$03
+    bne _menu_meas_opt_04
+    .dpage ?
+    lda $0004, x
+    .dpage 0
+    bra _menu_meas_opt_set
+_menu_meas_opt_04
+    cmp #$04
+    beq _menu_meas_opt_keyval
+    cmp #$05
+    bne _menu_meas_opt_06
+_menu_meas_opt_keyval
+    pea $0000
+    .dpage ?
+    phb
+      ldy $0004, x
+      lda $0006, x
+      .dpage 0
+      pha
+      plb
+      rep #$20
+      .al
+_menu_meas_opt_nextkey
+      .dpage ?
+      lda $0000, y
+      .dpage 0
+      cmp #$ffff
+      beq +
+      iny
+      iny
+      phy
+        phb
+          sep #$20
+          .as
+          .dpage ?
+          lda $0002, y
+          .dpage 0
+          pha
+          rep #$20
+          .al
+          .dpage ?
+          lda $0000, y
+          .dpage 0
+          plb
+          tay
+          jsr strlen
+        plb
+        tya
+        cmp 4, s
+        bmi _menu_meas_opt_keyval_skip
+        sta 4, s
+_menu_meas_opt_keyval_skip
+      ply
+      iny
+      iny
+      iny
+      bra _menu_meas_opt_nextkey
++
+    plb
+    pla
+    bra _menu_meas_opt_set
+_menu_meas_opt_06
+    .as
+    cmp #$06
+    bne _menu_meas_opt_07
+    lda #$10
+    bra _menu_meas_opt_set
+_menu_meas_opt_07
+    lda #$13
+_menu_meas_opt_set
+  rep #$20
+  .al
+  and #$00ff
+  plp
+  rts
+_menu_meas_no_set
+  .as
+  lda #$00
+  bra _menu_meas_opt_set
+
+; =============================================
+; menu_print_entries - Print all menu entries in current window
+;
+; Input:
+;   X = address of first menu entry (past header)
+;   DBR = bank of menu entry structure
+;   Stack: p_max_opt_len (byte), p_max_lbl_len (byte)
+;
+; Note: runs with DBR = menu bank. Uses wram() for WRAM access.
+; =============================================
+
+; Stack parameter offsets (relative to SP after entry):
+;   SP+1 = return addr low
+;   SP+2 = return addr high
+;   SP+3 = old_DBR (from phb in _show_menu_entries)
+;   SP+4 = p_max_opt_len (pushed second)
+;   SP+5 = p_max_lbl_len (pushed first)
+P_MAX_OPT_LEN = 4
+P_MAX_LBL_LEN = 5
+
+menu_print_entries
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  lda wram(window_y)
+  inc a
+  sta wram(print_y)
+_menu_print_ent_loop
+  lda wram(window_w)
+  sta wram(print_count)
+  lda wram(window_x)
+  inc a
+  inc a
+  sta wram(print_x)
+  .dpage ?
+  lda $0000, x         ; entry type. 0 = termination
+  .dpage 0
+  bne +
+  rts                   ; done — terminator found
+  ; Set up print source from menu entry text pointer
++ .dpage ?
+  lda $0001, x
+  sta wram(print_src)
+  lda $0002, x
+  sta wram(print_src+1)
+  lda $0003, x
+  sta wram(print_bank)
+  .dpage 0
+  jsr menu_check_disabled_func
+  lda #$00
+  bcc +
+  lda #$06
++ sta wram(print_pal)
+  phx
+  jsr hiprint
+  plx
+  .dpage ?
+  lda $0000, x
+  .dpage 0
+  cmp #MTYPE_SUBMENU
+  bne +
+  lda wram(print_done)
+  adc wram(print_x)
+  dec a
+  sta wram(print_x)
+  lda #<text_ellipse
+  sta wram(print_src)
+  lda #>text_ellipse
+  sta wram(print_src+1)
+  lda #<(text_ellipse >> 16)
+  sta wram(print_bank)
+  phx
+    jsr hiprint
+  plx
+  ; Print option value: clear area then print
++ lda P_MAX_LBL_LEN, s
+  clc
+  adc wram(window_x)
+  adc #$05
+  sta wram(print_x)
+  lda P_MAX_OPT_LEN, s
+  inc a                    ; +1: Mode 5 BG2/BG1 alternate; odd count leaves
+  and #$fe                 ; one BG layer uncleared. Round up to even.
+  sta wram(print_count)
+  lda #<(space64 >> 16)
+  sta wram(print_bank)
+  rep #$20
+  .al
+  lda #space64 & $ffff
+  sta wram(print_src)
+  phx
+    jsr hiprint
+  plx
+  jsr menu_print_opt_string
+  ; Advance to next entry (menu_print_opt_string returns in .as, need .al for 16-bit X math)
+  rep #$20
+  .al
+  txa
+  clc
+  adc #MENU_ENTRY_SIZE
+  tax
+  sep #$20
+  .as
+  lda wram(print_y)
+  clc
+  adc wram(listsel_step)
+  sta wram(print_y)
+  jmp _menu_print_ent_loop
+
+; =============================================
+; menu_print_opt_string - Print the option value for one menu entry
+;
+; Input: X = address of menu entry, DBR = bank
+; Uses: menu_val_ptr, menu_aux_ptr, mpos_kvpar_data, mpos_kvtab_ptr
+; =============================================
+menu_print_opt_string
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  ; Store entry value pointer
+  .dpage ?
+  rep #$20
+  .al
+  lda $0008, x
+  .dpage 0
+  sta menu_val_ptr
+  lda #stringbuf & $ffff
+  sta wram(print_src)
+  sep #$20
+  .as
+  .dpage ?
+  lda $000a, x
+  .dpage 0
+  sta menu_val_ptr+2
+  jsr menu_check_disabled_func
+  lda #$01
+  bcc +
+  lda #$06
++ sta wram(print_pal)
+  lda #$40
+  sta wram(print_count)
+  lda #<(stringbuf >> 16)
+  sta wram(print_bank)
+  .dpage ?
+  lda $0007, x
+  .dpage 0
+  bne +
+  jmp _menu_print_opt_string_out
++ cmp #$01
+  bne _menu_print_opt_string_02
+  ; --- uint8 ---
+  rep #$20
+  .al
+  lda [menu_val_ptr]
+  and #$00ff
+  phx
+    jsr bin2dec16
+    lda wram(print_src)
+    tay
+    sep #$20
+    .as
+    lda wram(print_bank)
+    phb
+      pha
+      plb
+      jsr right_align
+    plb
+    jsr hiprint
+  plx
+  jmp _menu_print_opt_string_out
+_menu_print_opt_string_02
+  .as
+  cmp #$02
+  bne _menu_print_opt_string_03
+  ; --- uint16 ---
+  rep #$20
+  .al
+  lda [menu_val_ptr]
+  phx
+    jsr bin2dec16
+    lda wram(print_src)
+    tay
+    sep #$20
+    .as
+    lda wram(print_bank)
+    phb
+      pha
+      plb
+      jsr right_align
+    plb
+    jsr hiprint
+  plx
+  jmp _menu_print_opt_string_out
+_menu_print_opt_string_03
+  .as
+  cmp #$03
+  bne _menu_print_opt_string_04
+  ; --- string ---
+  .dpage ?
+  rep #$20
+  .al
+  lda $0008, x
+  sta wram(print_src)
+  tay
+  sep #$20
+  .as
+  lda $0004, x
+  sta wram(print_count)
+  lda $000a, x
+  sta wram(print_bank)
+  .dpage 0
+  phx
+    phb
+      pha
+      plb
+      jsr right_align
+    plb
+    jsr hiprint
+  plx
+  lda wram(window_w)
+  sta wram(print_count)
+  jmp _menu_print_opt_string_out
+_menu_print_opt_string_04
+  .as
+  cmp #$04
+  beq _menu_print_opt_string_keyval
+  cmp #$05
+  bne _menu_print_opt_string_06
+_menu_print_opt_string_keyval
+  ; --- key-value ---
+  .dpage ?
+  lda $000a, x
+  .dpage 0
+  sta menu_aux_ptr+2      ; kvpar bank
+  .dpage ?
+  ldy $0008, x
+  .dpage 0
+  sty menu_aux_ptr        ; kvpar addr
+  rep #$20
+  .al
+  lda [menu_aux_ptr]      ; load currently set value
+  phx
+    .dpage ?
+    ldy $0007, x
+    .dpage 0
+    sep #$10
+    .xs
+    cpy #$05
+    beq +
+    and #$00ff
++   rep #$10
+    .xl
+  plx
+  sta mpos_kvpar_data
+  .dpage ?
+  rep #$20
+  .al
+  lda $0004, x
+  .dpage 0
+  sta mpos_kvtab_ptr
+  sep #$20
+  .as
+  .dpage ?
+  lda $0006, x
+  .dpage 0
+  sta mpos_kvtab_ptr+2
+  phb
+    lda mpos_kvtab_ptr+2
+    pha
+    plb
+    rep #$20
+    .al
+    ldy mpos_kvtab_ptr
+    lda mpos_kvpar_data
+    jsr menu_kv_lookup
+    ; sanitize invalid option setting
+    cpy #$ffff
+    bne +
+    ldy mpos_kvtab_ptr    ; invalid → default to first entry
+    .dpage ?
++   lda $0002, y
+    .dpage 0
+    pha
+      sta wram(print_src)
+      sep #$20
+      .as
+      .dpage ?
+      lda $0004, y
+      .dpage 0
+      sta wram(print_bank)
+      pha
+      plb
+    ply
+    jsr right_align
+  plb
+  phx
+    jsr hiprint
+  plx
+  jmp _menu_print_opt_string_out
+_menu_print_opt_string_06
+  sep #$20
+  .as
+  cmp #$06
+  bne _menu_print_opt_string_07
+  ; --- file ---
+  lda #$41
+  sta stringbuf
+  lda #$00
+  sta stringbuf+1
+  jsr menu_check_disabled_func
+  lda #$02
+  bcc +
+  lda #$06
++ sta wram(print_pal)
+  lda #$10
+  sta wram(print_count)
+  rep #$20
+  .al
+  lda #stringbuf & $ffff
+  sta wram(print_src)
+  tay
+  sep #$20
+  .as
+  lda #<(stringbuf >> 16)
+  sta wram(print_bank)
+  phx
+    phb
+      pha
+      plb
+      jsr right_align
+    plb
+    jsr hiprint
+  plx
+  bra _menu_print_opt_string_out
+_menu_print_opt_string_07
+  ; --- time ---
+  sep #$20
+  .as
+  jsr menu_check_disabled_func
+  lda #$02
+  bcc +
+  lda #$06
++ sta wram(print_pal)
+  lda #$13
+  sta wram(print_count)
+  rep #$20
+  .al
+  lda #stringbuf & $ffff
+  sta wram(print_src)
+  tay
+  sep #$20
+  .as
+  lda #<(stringbuf >> 16)
+  sta wram(print_bank)
+  phx
+    phb
+      pha
+      plb
+      phy
+        lda menu_val_ptr+2
+        ldx menu_val_ptr
+        pha
+        phx
+          jsr rendertime
+        plx
+        pla
+      ply
+      jsr right_align
+    plb
+    jsr hiprint
+  plx
+_menu_print_opt_string_out
+  rts
+
+; =============================================
+; menu_kv_lookup - Look up key in a key-value table
+;
+; Input:
+;   Y = address of entry table, DBR = bank
+;   A = search value (16-bit)
+; Returns:
+;   Y = address of table entry if found, $FFFF if not found
+; =============================================
+menu_kv_lookup
+  .databank 0
+  .dpage 0
+  php
+    rep #$30
+    .xl
+    .al
+    pha
+    .dpage ?
+-   lda $0000, y
+    .dpage 0
+    cmp #$ffff
+    beq +
+    cmp 1, s
+    beq _menu_kv_lookup_out
+    iny
+    iny
+    iny
+    iny
+    iny
+    bra -
++   ldy #$ffff
+_menu_kv_lookup_out
+    pla
+  plp
+  rts
+
+; =============================================
+; menu_edit_value - Show select/edit dialog for a value
+;
+; Input: DBR = bank of menu entry, X = address of menu entry
+; Uses: menu_val_ptr, menu_aux_ptr, mev_* vars
+; =============================================
+menu_edit_value
+  .databank 0
+  .dpage 0
+  ; Must enter .al for 16-bit field loads (original uses AllocStack which sets .al)
+  rep #$20
+  .al
+  ; Load all needed fields from menu entry
+  jsr menu_meas_opt
+  sta mev_value_len
+  .dpage ?
+  lda $0004, x
+  .dpage 0
+  sta menu_aux_ptr        ; preset table addr
+  .dpage ?
+  lda $0008, x
+  .dpage 0
+  sta menu_val_ptr        ; value addr
+  .dpage ?
+  lda $000e, x
+  .dpage 0
+  sta mev_chgfunc_ptr     ; change hook addr
+  lda #$0000
+  sep #$20
+  .as
+  jsr menu_check_disabled_func
+  ror a
+  sta mev_text_grey
+  .dpage ?
+  lda $0006, x
+  .dpage 0
+  sta menu_aux_ptr+2      ; preset bank
+  .dpage ?
+  lda $000a, x
+  .dpage 0
+  sta menu_val_ptr+2      ; value bank
+  .dpage ?
+  lda $0010, x
+  .dpage 0
+  sta mev_chgfunc_ptr+2   ; change hook bank
+  ; Adjust selection bar to highlight parameter area
+  lda wram(bar_xl)
+  clc
+  adc wram(bar_wl)
+  sec
+  sbc mev_value_len
+  sta wram(bar_xl)
+  lda mev_value_len
+  sta wram(bar_wl)
+  .dpage ?
+  lda $0007, x           ; data type
+  .dpage 0
+  cmp #MENU_NUM_DATA_TYPES+1
+  bcs _menu_edit_value_out
+  asl a
+  txy                     ; save menu entry address
+  tax                     ; jump table offset
+  phx
+    lda #$01
+    jsr set_bar_color
+  plx
+  rep #$20
+  .al
+  lda [menu_val_ptr]
+  sta mev_work_value
+  jsr (menu_tab_edit_value_dialogs, x)
+  bcc +
+  ; Save config to MCU. MCU_CMD/SNES_CMD are FPGA registers at $00:2Axx,
+  ; NOT WRAM. Must set DBR to bank $00 for absolute addressing to reach them.
+  ; Timeout added: in emulator, these are open bus (no MCU to acknowledge).
+  ; On real hardware the MCU responds quickly; timeout is never reached.
+  sep #$20
+  .as
+  phb
+    lda #$00
+    pha
+    plb
+    rep #$20
+    .al
+    lda #CMD_SAVE_CFG
+    ldx #$0000
+-   sta MCU_CMD
+    cmp SNES_CMD
+    beq _mev_save_done
+    inx
+    bne -
+_mev_save_done
+    lda #$0000
+    sta MCU_CMD
+  plb
+  bra _menu_edit_value_skip_chghook
++ lda [menu_val_ptr]
+  sta mev_work_value
+  jsr menu_check_change_hook
+_menu_edit_value_skip_chghook
+  phx
+    lda #$0000
+    jsr set_bar_color
+  plx
+_menu_edit_value_out
+  rts
+
+
+; =============================================
+; Value dialog handlers
+;
+; These run with DBR = menu bank. Use wram() for WRAM access.
+; Local vars (mev_*) are in DP range, accessed via DP mode.
+; Indirect long [menu_val_ptr] and [menu_aux_ptr] work via DP.
+; =============================================
+
+menu_value_dialog_dummy
+  rts
+
+; --- u8 dialog ---
+menu_value_dialog_u8
+  .databank ?
+  .dpage 0
+  php
+    rep #$10
+    .xl
+    sep #$20
+    .as
+    phb
+-     jsr waitblank
+      jsr read_pad
+      jsr printtime
+      lda wram(pad_up)
+      bne _mvd_u8_up
+      lda wram(pad_down)
+      bne _mvd_u8_down
+      lda wram(pad_left)
+      bne _mvd_u8_left
+      lda wram(pad_right)
+      bne _mvd_u8_right
+      lda wram(pad_b)
+      bne _mvd_u8_cancel
+      lda wram(pad_a)
+      bne _mvd_u8_set
+      lda wram(pad_l)
+      bne _mvd_u8_l
+      lda wram(pad_r)
+      bne _mvd_u8_r
+      bra -
+_mvd_u8_up
+      lda mev_work_value
+      ldy #$0002
+      cmp [menu_aux_ptr], y
+      bcc _mvd_u8_up_ok
+      lda [menu_aux_ptr], y
+      sta mev_work_value
+      bra _mvd_u8_print
+_mvd_u8_up_ok
+      inc mev_work_value
+      bra _mvd_u8_print
+_mvd_u8_down
+      lda mev_work_value
+      cmp [menu_aux_ptr]
+      beq _mvd_u8_print
+      bcs _mvd_u8_down_ok
+      lda [menu_aux_ptr]
+      sta mev_work_value
+      bra _mvd_u8_print
+_mvd_u8_down_ok
+      dec mev_work_value
+      bra _mvd_u8_print
+_mvd_u8_left
+      lda mev_work_value
+      sec
+      sbc #9
+      bcs _mvd_u8_left_noclip
+      lda #$00
+_mvd_u8_left_noclip
+      sta mev_work_value
+      cmp [menu_aux_ptr]
+      beq _mvd_u8_print
+      bcs _mvd_u8_down_ok
+      lda [menu_aux_ptr]
+      sta mev_work_value
+      bra _mvd_u8_print
+_mvd_u8_right
+      lda mev_work_value
+      clc
+      adc #9
+      bcc _mvd_u8_right_noclip
+      lda #$ff
+_mvd_u8_right_noclip
+      sta mev_work_value
+      ldy #$0002
+      cmp [menu_aux_ptr], y
+      beq _mvd_u8_print
+      bcc _mvd_u8_up_ok
+      lda [menu_aux_ptr], y
+      sta mev_work_value
+      bra _mvd_u8_print
+_mvd_u8_l
+      lda [menu_aux_ptr]
+      sta mev_work_value
+      bra _mvd_u8_print
+_mvd_u8_r
+      ldy #$0002
+      lda [menu_aux_ptr], y
+      sta mev_work_value
+      bra _mvd_u8_print
+_mvd_u8_cancel
+    plb
+  plp
+  clc
+  rts
+_mvd_u8_set
+      lda mev_work_value
+      sta [menu_val_ptr]
+      bra _mvd_u8_cont
+_mvd_u8_print
+      rep #$20
+      .al
+      lda mev_work_value
+      and #$00ff
+      jsr bin2dec16
+      phb
+        sep #$20
+        .as
+        lda #<(stringbuf >> 16)
+        pha
+        plb
+        .databank 0
+        ldy #stringbuf & $ffff
+        jsr right_align
+        lda bar_yl
+        inc a
+        sta print_y
+        lda #$01
+        bit mev_text_grey
+        bpl +
+        lda #$06
++       sta print_pal
+        jsr hiprint
+      plb
+      .databank ?
+      brl -
+_mvd_u8_cont
+    plb
+  plp
+  sec
+  rts
+
+; --- u16 dialog ---
+menu_value_dialog_u16
+  .databank ?
+  .dpage 0
+  php
+    rep #$10
+    .xl
+    sep #$20
+    .as
+    phb
+      rep #$20
+      .al
+-     jsr waitblank
+      jsr read_pad
+      jsr printtime
+      lda wram(pad_up)
+      ror a
+      bcs _mvd_u16_up
+      lda wram(pad_down)
+      ror a
+      bcs _mvd_u16_down
+      lda wram(pad_left)
+      ror a
+      bcs _mvd_u16_left
+      lda wram(pad_right)
+      ror a
+      bcs _mvd_u16_right
+      lda wram(pad_b)
+      ror a
+      bcc +
+      jmp _mvd_u16_cancel
++     lda wram(pad_a)
+      ror a
+      bcs _mvd_u16_set
+      lda wram(pad_l)
+      ror a
+      bcs _mvd_u16_l
+      lda wram(pad_r)
+      ror a
+      bcs _mvd_u16_r
+      bra -
+_mvd_u16_up
+      lda mev_work_value
+      ldy #$0002
+      cmp [menu_aux_ptr], y
+      bcc _mvd_u16_up_ok
+      lda [menu_aux_ptr], y
+      sta mev_work_value
+      bra _mvd_u16_print
+_mvd_u16_up_ok
+      inc mev_work_value
+      bra _mvd_u16_print
+_mvd_u16_down
+      lda mev_work_value
+      cmp [menu_aux_ptr]
+      beq _mvd_u16_print
+      bcs _mvd_u16_down_ok
+      lda [menu_aux_ptr]
+      sta mev_work_value
+      bra _mvd_u16_print
+_mvd_u16_down_ok
+      dec mev_work_value
+      bra _mvd_u16_print
+_mvd_u16_left
+      lda mev_work_value
+      sec
+      sbc #99
+      bcs _mvd_u16_left_noclip
+      lda #$0000
+_mvd_u16_left_noclip
+      sta mev_work_value
+      cmp [menu_aux_ptr]
+      beq _mvd_u16_print
+      bcs _mvd_u16_down_ok
+      lda [menu_aux_ptr]
+      sta mev_work_value
+      bra _mvd_u16_print
+_mvd_u16_right
+      lda mev_work_value
+      clc
+      adc #99
+      bcc _mvd_u16_right_noclip
+      lda #$ffff
+_mvd_u16_right_noclip
+      sta mev_work_value
+      ldy #$0002
+      cmp [menu_aux_ptr], y
+      beq _mvd_u16_print
+      bcc _mvd_u16_up_ok
+      lda [menu_aux_ptr], y
+      sta mev_work_value
+      bra _mvd_u16_print
+_mvd_u16_l
+      lda [menu_aux_ptr]
+      sta mev_work_value
+      bra _mvd_u16_print
+_mvd_u16_r
+      ldy #$0002
+      lda [menu_aux_ptr], y
+      sta mev_work_value
+      bra _mvd_u16_print
+_mvd_u16_cancel
+    plb
+  plp
+  clc
+  rts
+_mvd_u16_set
+      lda mev_work_value
+      sta [menu_val_ptr]
+      bra _mvd_u16_cont
+_mvd_u16_print
+      rep #$20
+      .al
+      lda mev_work_value
+      jsr bin2dec16
+      phb
+        sep #$20
+        .as
+        lda #<(stringbuf >> 16)
+        pha
+        plb
+        .databank 0
+        ldy #stringbuf & $ffff
+        jsr right_align
+        lda bar_yl
+        inc a
+        sta print_y
+        lda #$01
+        bit mev_text_grey
+        bpl +
+        lda #$06
++       sta print_pal
+        jsr hiprint
+      plb
+      .databank ?
+      rep #$20
+      .al
+      brl -
+_mvd_u16_cont
+    plb
+  plp
+  sec
+  rts
+
+; --- string dialog (stub) ---
+menu_value_dialog_string
+  rts
+
+; --- kv8 dialog ---
+menu_value_dialog_kv8
+  .databank 0
+  .dpage 0
+  php
+    phb
+      sep #$20
+      .as
+      lda menu_aux_ptr+2
+      pha
+      plb
+      ldy menu_aux_ptr
+      rep #$20
+      .al
+      lda mev_work_value
+      and #$00ff
+      jsr menu_kv_lookup
+      ; sanitize invalid option
+      sep #$20
+      .as
+      cpy #$ffff
+      bne _mvd_kv8_loop
+      ldy menu_aux_ptr
+_mvd_kv8_loop
+      phy
+        jsr waitblank
+        jsr read_pad
+        jsr printtime
+      ply
+      lda wram(pad_up)
+      bne _mvd_kv8_up
+      lda wram(pad_down)
+      bne _mvd_kv8_down
+      lda wram(pad_a)
+      bne _mvd_kv8_set
+      lda wram(pad_b)
+      bne _mvd_kv8_cancel
+      bra _mvd_kv8_loop
+_mvd_kv8_up
+      .dpage ?
+      ldx $0005, y
+      .dpage 0
+      cpx #$ffff
+      beq _mvd_kv8_print
+      iny
+      iny
+      iny
+      iny
+      iny
+      bra _mvd_kv8_print
+_mvd_kv8_down
+      cpy menu_aux_ptr
+      beq _mvd_kv8_print
+      dey
+      dey
+      dey
+      dey
+      dey
+      bra _mvd_kv8_print
+_mvd_kv8_set
+      .dpage ?
+      lda $0000, y
+      .dpage 0
+      sta [menu_val_ptr]
+      bra _mvd_kv8_cont
+_mvd_kv8_cancel
+    plb
+  plp
+  clc
+  rts
+_mvd_kv8_print
+      lda #<(space64 >> 16)
+      sta wram(print_bank)
+      rep #$20
+      .al
+      lda #space64 & $ffff
+      sta wram(print_src)
+      sep #$20
+      .as
+      lda wram(bar_yl)
+      inc a
+      sta wram(print_y)
+      lda wram(window_x)
+      clc
+      adc wram(window_w)
+      clc
+      sbc mev_value_len
+      dec a
+      sta wram(print_x)
+      lda mev_value_len
+      inc a                   ; Round up to even: Mode 5 BG2/BG1 alternate,
+      and #$fe                ; odd count leaves one BG layer uncleared.
+      sta wram(print_count)
+      phy
+        jsr hiprint
+      ply
+      rep #$20
+      .al
+      .dpage ?
+      lda $0000, y
+      .dpage 0
+      and #$00ff
+      sta mev_work_value
+      .dpage ?
+      lda $0002, y
+      .dpage 0
+      sta wram(print_src)
+      sta mev_label_addr
+      sep #$20
+      .as
+      .dpage ?
+      lda $0004, y
+      .dpage 0
+      sta wram(print_bank)
+      lda #$01
+      bit mev_text_grey
+      bpl +
+      lda #$06
++     sta wram(print_pal)
+      phy
+        ldy mev_label_addr
+        lda wram(print_bank)
+        phb
+          pha
+          plb
+          jsr right_align
+          jsr hiprint
+        plb
+      ply
+      jsr menu_check_change_hook
+      brl _mvd_kv8_loop
+_mvd_kv8_cont
+    plb
+  plp
+  sec
+  rts
+
+; --- kv16 dialog (stub) ---
+menu_value_dialog_kv16
+  rts
+
+; --- file dialog (stub) ---
+menu_value_dialog_file
+  rts
+
+; --- time dialog ---
+menu_value_dialog_time
+  .databank ?
+  .dpage 0
+  php
+    sep #$20
+    .as
+    lda wram(window_x)
+    clc
+    adc wram(window_w)
+    clc
+    sbc mev_value_len
+    dec a
+    pha           ; p_time_x
+    lda wram(bar_yl)
+    inc a
+    pha           ; p_time_y
+    lda menu_val_ptr+2
+    pha
+    ldx menu_val_ptr
+    phx
+    jsr time_init
+    plx
+    plx
+    pla
+    bcc _mvd_time_cancel
+  plp
+  sec
+  rts
+_mvd_time_cancel
+  plp
+  clc
+  rts
+
+; =============================================
+; menu_check_change_hook - Call change-hook function if defined
+; =============================================
+menu_check_change_hook
+  .dpage 0
+  php
+  sep #$20
+  .as
+    lda mev_chgfunc_ptr
+    ora mev_chgfunc_ptr + 1
+    ora mev_chgfunc_ptr + 2
+    clc
+    beq _menu_check_change_hook_exit
+    phk
+    per _menu_check_change_hook_exit-1
+    lda mev_chgfunc_ptr + 2
+    pha
+    lda mev_chgfunc_ptr + 1
+    pha
+    lda mev_chgfunc_ptr
+    pha
+    lda mev_work_value
+    rtl
+_menu_check_change_hook_exit
+  plp
+  rts
+
+; =============================================
+; menu_check_disabled_func - Check if menu entry is disabled
+;
+; Input: X = address of menu entry, DBR = bank
+; Returns: C=0: enabled, C=1: disabled
+; =============================================
+menu_check_disabled_func
+  .databank 0
+  .as
+  .dpage 0
+  .dpage ?
+  lda $0014, x
+  ora $0015, x
+  ora $0016, x
+  .dpage 0
+  clc
+  beq _menu_check_disabled_func_exit
+  phk
+  per _menu_check_disabled_func_exit-1
+  .dpage ?
+  lda $0016, x
+  .dpage 0
+  pha
+  .dpage ?
+  lda $0015, x
+  .dpage 0
+  pha
+  .dpage ?
+  lda $0014, x
+  .dpage 0
+  pha
+  rtl
+_menu_check_disabled_func_exit
+  rts
+
+; =============================================
+; Jump table to value dialog handlers
+; =============================================
+menu_tab_edit_value_dialogs
+.word menu_value_dialog_dummy & $ffff
+.word menu_value_dialog_u8 & $ffff
+.word menu_value_dialog_u16 & $ffff
+.word menu_value_dialog_string & $ffff
+.word menu_value_dialog_kv8 & $ffff
+.word menu_value_dialog_kv16 & $ffff
+.word menu_value_dialog_file & $ffff
+.word menu_value_dialog_time & $ffff
