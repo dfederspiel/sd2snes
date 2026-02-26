@@ -1,0 +1,1540 @@
+; filesel.a65 - File selector (64tass port)
+;
+; Ported from snes/filesel.a65. Provides the file browser UI:
+; directory listing, navigation, file selection, MCU communication.
+;
+; Key porting decisions vs original:
+;   - DBR stays $00 throughout (no PHB/PLB bank switching for WRAM)
+;   - ROM data in banks $C1+ accessed via indirect long [ptr],y
+;   - select_dir uses longptr for cross-bank filename reads
+;   - @label → auto-long (64tass picks long for bank-mismatched labels)
+;   - !label → auto-absolute
+;   - #^label → #label >> 16
+;   - #!label → #label & $ffff
+
+; =============================================
+; filesel_init - Initialize file selector state
+; Called after MCU is ready. Sets up directory pointers.
+; =============================================
+filesel_init
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda #ROOT_DIR >> 16
+  ldx #ROOT_DIR & $ffff
+  sta dirptr_bank
+  stx dirptr_addr
+  sta dirstart_bank
+  stx dirstart_addr
+  stz filesel_state
+  stz dirend_onscreen
+  lda #$02
+  sta cursor_x
+  lda #$09
+  sta cursor_y
+  lda #$01
+  sta bar_xl
+  lda #$3e
+  sta bar_wl
+  ldx #$0000
+  stx dirptr_idx
+  stx filesel_sel
+  stx direntry_xscroll
+  stx direntry_xscroll_state
+  lda #$01
+  sta filesel_dirty
+  rep #$20
+  .al
+  lda #dirlog & $ffff
+  sta dirlog_idx
+  sep #$20
+  .as
+  lda #dirlog >> 16
+  sta dirlog_idx+2
+  lda #$2f
+  sta FILESEL_CWD
+  lda #$00
+  sta FILESEL_CWD+1
+  jsr filesel_request_filelist
+  rts
+
+; =============================================
+; fileselloop - Main file selector loop
+; Waits for VBlank, processes input, redraws as needed.
+; =============================================
+fileselloop
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda isr_done
+  lsr
+  bcc fileselloop
+  stz isr_done
+  jsr printtime
+  jsr filesel_updates
+  lda filesel_dirty
+  cmp #$01
+  beq fileselloop_redraw
+  jsr scroll_direntry
+  bra fileselloop
+fileselloop_redraw
+  stz filesel_dirty
+  jsr filesel_statusbar
+  jsr filesel_redraw
+  jsr filesel_cleanup
+  bra fileselloop
+
+; =============================================
+; filesel_cleanup - Pad remaining screen lines with spaces
+; =============================================
+filesel_cleanup
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda dirend_onscreen
+  beq filesel_cleanup_out
+  lda dirend_idx
+  lsr
+  lsr
+  pha
+filesel_cleanup_loop
+  cmp listdisp
+  beq _cleanup_done
+  pha
+  clc
+  adc #$09
+  inc a
+  sta print_y
+  stz print_x
+  lda #space64 >> 16
+  ldx #space64 & $ffff
+  sta print_bank
+  stx print_src
+  stz print_pal
+  lda #64
+  sta print_count
+  jsr hiprint
+  pla
+  inc a
+  bra filesel_cleanup_loop
+_cleanup_done
+  pla
+  cmp filesel_sel
+  beq filesel_cleanup_out
+  bpl filesel_cleanup_out
+  sta filesel_sel
+filesel_cleanup_out
+  rts
+
+; =============================================
+; filesel_updates - Handle input, update selection bar
+; =============================================
+filesel_updates
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda filesel_sel
+  asl
+  asl
+  sta dirptr_idx
+  lda filesel_sel
+  clc
+  adc #$08
+  sta bar_yl
+  lda #$3e
+  sta bar_wl
+  lda #$01
+  sta bar_xl
+  ; get input
+  jsr read_pad
+  lda pad_down
+  bne _key_down
+  lda pad_up
+  bne _key_up
+  lda pad_right
+  bne _key_right
+  lda pad_left
+  bne _key_left
+  lda pad_b
+  bne _key_b
+  lda pad_start
+  bne _key_start
+  lda pad_select
+  bne _key_select
+  lda pad_a
+  bne _key_a
+  lda pad_x
+  bne _key_x
+  lda pad_y
+  bne _key_y
+  lda pad_l
+  bne _key_l
+  lda pad_r
+  bne _key_r
+  bra _fileselupd_out
+_key_down
+  jsr filesel_key_down
+  bra _fileselupd_out
+_key_up
+  jsr filesel_key_up
+  bra _fileselupd_out
+_key_right
+  jsr filesel_key_right
+  bra _fileselupd_out
+_key_left
+  jsr filesel_key_left
+  bra _fileselupd_out
+_key_b
+  jsr filesel_key_b
+  bra _fileselupd_out
+_key_a
+  jsr filesel_key_a
+  bra _fileselupd_out
+_key_x
+  jsr filesel_key_x
+  bra _fileselupd_out
+_key_y
+  jsr filesel_key_y
+  bra _fileselupd_out
+_key_select
+  jsr filesel_key_select
+  bra _fileselupd_out
+_key_start
+  jsr filesel_key_start
+  bra _fileselupd_out
+_key_l
+  jsr filesel_key_l
+  bra _fileselupd_out
+_key_r
+  jsr filesel_key_r
+  bra _fileselupd_out
+
+_fileselupd_out
+  lda #$09
+  sta cursor_y
+  rts
+
+; =============================================
+; filesel_redraw - Dispatch to appropriate redraw
+; =============================================
+filesel_redraw
+  .databank 0
+  .dpage 0
+  lda filesel_state
+  beq redraw_filelist
+filesel_redraw_out
+  rts
+
+; =============================================
+; redraw_filelist - Render directory entries on screen
+; =============================================
+redraw_filelist
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  ldy #$0000
+  sty dirptr_idx
+  sty direntry_fits_idx
+  sty direntry_xscroll
+  sty direntry_xscroll_state
+  stz dirend_idx
+  stz dirend_onscreen
+redraw_filelist_loop
+  ldy dirptr_idx
+  tya
+  lsr
+  lsr
+  cmp listdisp
+  beq redraw_filelist_last
+  rep #$20
+  .al
+  lda [dirptr_addr], y
+  sta dirent_addr
+  iny
+  iny
+  sep #$20
+  .as
+  lda [dirptr_addr], y      ; load fileinfo bank
+  clc
+  adc #$c0                  ; add $C0 for memory map
+  sta dirent_bank            ; store as current bank
+  cmp #$c0                  ; if bank was 0 -> dirend entry
+  beq redraw_filelist_dirend
+  iny
+  lda [dirptr_addr], y
+  iny
+  sta dirent_type
+  sty dirptr_idx
+  jsr print_direntry
+  inc direntry_fits_idx
+  bra redraw_filelist_loop
+redraw_filelist_dirend
+  dey                        ; recover last valid direntry number
+  dey
+  beq +
+  dey
+  dey
+  dey
+  dey
++ sty dirend_idx
+  lda #$01
+  sta dirend_onscreen
+  bra redraw_filelist_out
+redraw_filelist_last
+  iny
+  iny
+  lda [dirptr_addr], y
+  beq redraw_filelist_dirend
+redraw_filelist_out
+  ldx #$0000
+  stx dirptr_idx
+  brl filesel_redraw_out
+
+; =============================================
+; print_direntry - Render one directory entry line
+; Uses hiprint to display filename + type indicator.
+; DBR stays $00 throughout (no PHB/PLB needed).
+; =============================================
+print_direntry
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda cursor_y
+  sta print_y
+  inc a
+  sta cursor_y
+
+  ; Determine palette based on entry type
+  rep #$20
+  .al
+  lda #$06                   ; skip size string
+  sta fd_fnoff
+  lda dirent_type
+  and #TYPE_SUBDIR | TYPE_PARENT
+  beq _dirent_is_file
+_dirent_is_dir
+  lda #$01                   ; different color for dirs
+  bra _dirent_type_cont
+_dirent_is_file
+  lda dirent_type
+  and #$00ff
+  cmp #$0001                 ; SMC -> palette 0 (white)
+  bne +
+  lda #$0000
+  bra _dirent_type_cont
++
+  cmp #TYPE_SPC              ; SPC -> palette 2
+  bne +
+  lda #$0002
+  bra _dirent_type_cont
++
+  lda #$0000                 ; default -> palette 0
+_dirent_type_cont
+  sta print_pal
+  rep #$20
+  .al
+  lda dirent_addr
+  clc
+  adc fd_fnoff
+  clc
+  adc direntry_xscroll
+  sta fd_fnoff
+  sep #$20
+  .as
+
+  lda cursor_x
+  sta print_x
+
+  ldx fd_fnoff
+  lda #54
+  sta print_count
+  stx print_src
+  lda dirent_bank
+  sta print_bank
+  jsr hiprint
+  lda cursor_x
+  clc
+  adc print_done
+  sta print_x
+
+  lda print_over
+  ldy direntry_fits_idx
+  sta direntry_fits, y
+  lda #54
+  sec
+  sbc print_done
+  sta print_count
+  lda #space64 >> 16
+  ldx #space64 & $ffff
+  sta print_bank
+  stx print_src
+  jsr hiprint
+
+  sep #$20
+  .as
+  lda dirent_type
+  and #$f0
+  cmp #$80
+  bne _dirent_is_file_2
+  lda #text_dirmark >> 16
+  ldx #text_dirmark & $ffff
+  sta print_bank
+  stx print_src
+  bra _dirent_type_cont_2
+_dirent_is_file_2
+  lda dirent_bank
+  ldx dirent_addr
+  sta print_bank
+  stx print_src
+_dirent_type_cont_2
+  lda #56
+  sta print_x
+  lda #6
+  sta print_count
+  jsr hiprint
+
+  rts
+
+; =============================================
+; Navigation key handlers
+; =============================================
+
+filesel_key_down
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  jsr scroll_direntry_clean
+  lda listdisp
+  dec a
+  cmp filesel_sel
+  bne _down_noscroll
+  lda #$01
+  sta filesel_dirty
+  lda dirend_onscreen
+  bne _down_out
+  rep #$20
+  .al
+  lda dirptr_addr
+  clc
+  adc #$04
+  bcc +
+  inc dirptr_bank
++ sta dirptr_addr
+  sep #$20
+  .as
+  rts
+_down_noscroll
+  lda dirend_onscreen
+  beq +
+  lda dirend_idx
+  lsr
+  lsr
+  cmp filesel_sel
+  beq fileselupd_lastcursor
+  bcc fileselupd_lastcursor
++ lda filesel_sel
+  inc a
+  sta filesel_sel
+_down_out
+  rts
+
+filesel_key_up
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  jsr scroll_direntry_clean
+  lda filesel_sel
+  bne _up_noscroll
+  lda #$01
+  sta filesel_dirty
+  rep #$20
+  .al
+  lda dirptr_addr
+  cmp dirstart_addr
+  beq _up_out
+  sec
+  sbc #$04
+  bcs +
+  dec dirptr_bank
++ sta dirptr_addr
+  bra _up_out
+_up_noscroll
+  dec a
+  sta filesel_sel
+_up_out
+  sep #$20
+  .as
+  rts
+
+fileselupd_lastcursor
+  .databank 0
+  .dpage 0
+  jsr scroll_direntry_clean
+  lda dirend_idx
+  lsr
+  lsr
+  sta filesel_sel
+  rts
+
+; go back one page
+filesel_key_left
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  stz direntry_xscroll
+  stz direntry_xscroll_state
+  lda #$01
+  sta filesel_dirty
+  rep #$20
+  .al
+  lda dirptr_addr
+  beq _left_reset
+  lsr
+  lsr
+  cmp listdisp
+  beq _left_reset
+  bcc _left_reset
+  sec
+  sbc listdisp
+  asl
+  asl
+  cmp dirstart_addr
+  bcc _left_reset
+- sta dirptr_addr
+  sep #$20
+  .as
+  rts
+_left_reset
+  lda dirstart_addr
+  stz filesel_sel
+  bra -
+
+; go forth one page
+filesel_key_right
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  stz direntry_xscroll
+  stz direntry_xscroll_state
+  lda dirend_onscreen
+  bne fileselupd_lastcursor
+  lda #$01
+  sta filesel_dirty
+  rep #$20
+  .al
+  lda listdisp
+  asl
+  asl
+  clc
+  adc dirptr_addr
+  sta dirptr_addr
+  lda listdisp
+  asl
+  asl
+  clc
+  adc dirptr_addr
+  cmp dirend_addr
+  bmi +
+  lda dirend_addr
+  lsr
+  lsr
+  sec
+  sbc listdisp
+  asl
+  asl
+  sta dirptr_addr
+  sep #$20
+  .as
+  lda listdisp
+  dec a
+  sta filesel_sel
++ sep #$20
+  .as
+  rts
+
+filesel_key_a
+  .databank 0
+  .dpage 0
+  jsr select_item
+  rts
+
+filesel_key_select
+  .databank 0
+  .dpage 0
+  jsl select_favorite_file
+  rts
+
+filesel_key_start
+  .databank 0
+  .dpage 0
+  jsl select_last_file
+  rts
+
+filesel_key_b
+  .databank 0
+  .dpage 0
+  stz direntry_xscroll
+  stz direntry_xscroll_state
+  jmp sel_is_parent
+
+filesel_key_l
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  stz direntry_xscroll
+  stz direntry_xscroll_state
+  ldx dirstart_addr
+  stx dirptr_addr
+  ldx #$0000
+  stx filesel_sel
+  lda #$01
+  sta filesel_dirty
+  rts
+
+filesel_key_r
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  stz direntry_xscroll
+  stz direntry_xscroll_state
+  lda dirend_onscreen
+  beq +
+  jmp fileselupd_lastcursor
++ lda #$01
+  sta filesel_dirty
+  rep #$20
+  .al
+  lda dirend_addr
+  lsr
+  lsr
+  sec
+  sbc dirstart_addr
+  cmp listdisp
+  bpl +
+  beq +
+  stz dirptr_addr
+  tya
+  lsr
+  lsr
+  dec a
+  sep #$20
+  .as
+  sta filesel_sel
+  bra _filesel_key_r_out
++ sbc listdisp
+  asl
+  asl
+  sta dirptr_addr
+  sep #$20
+  .as
+  lda listdisp
+  dec a
+  sta filesel_sel
+_filesel_key_r_out
+  rts
+
+filesel_key_x
+  .databank 0
+  .dpage 0
+  jsr mainmenu
+  rts
+
+filesel_key_y
+  .databank 0
+  .dpage 0
+  jsr open_context_menu
+  rts
+
+; =============================================
+; select_item - Dispatch based on directory entry type
+; =============================================
+select_item
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  rep #$20
+  .al
+  lda filesel_sel
+  and #$00ff
+  asl
+  asl
+  tay
+  sep #$20
+  .as
+  iny
+  iny
+  iny
+  lda [dirptr_addr], y
+  cmp #TYPE_ROM
+  beq sel_is_file
+  cmp #TYPE_SPC
+  beq sel_is_spc
+  cmp #TYPE_SUBDIR
+  beq sel_is_dir
+  cmp #TYPE_PARENT
+  beq sel_is_parent
+select_item_cont
+  rts
+sel_is_file
+  jsr select_file
+  bra select_item_cont
+sel_is_parent
+  jsr select_parent
+  bra select_item_cont
+sel_is_dir
+  jsr select_dir
+  bra select_item_cont
+sel_is_spc
+  jsr select_spc
+  bra select_item_cont
+
+; =============================================
+; select_file - Tell MCU to load a ROM file
+; =============================================
+select_file
+  .databank 0
+  .dpage 0
+  dey
+  rep #$20
+  .al
+  lda [dirptr_addr], y
+  and #$00ff
+  sta MCU_PARAM+6
+  dey
+  dey
+  lda [dirptr_addr], y
+  sta MCU_PARAM+4
+  lda #FILESEL_CWD & $ffff
+  sta MCU_PARAM
+  sep #$20
+  .as
+  lda #FILESEL_CWD >> 16
+  sta MCU_PARAM+2
+  lda #$00
+  sta MCU_PARAM+3
+  lda #CMD_LOADROM
+  jsr game_handshake
+  rts
+
+; =============================================
+; select_dir - Enter a subdirectory
+; Uses longptr for cross-bank filename reads (no PHB/PLB).
+; =============================================
+select_dir
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  tyx                          ; save entry index in X
+  ; save old dir position to dirlog
+  rep #$20
+  .al
+  ldy #$0000
+  lda dirstart_addr
+  sta [dirlog_idx], y
+  iny
+  iny
+  lda dirstart_bank
+  sta [dirlog_idx], y
+  iny
+  lda dirptr_addr
+  sta [dirlog_idx], y
+  iny
+  iny
+  lda dirptr_bank
+  sta [dirlog_idx], y
+  iny
+  lda filesel_sel
+  sta [dirlog_idx], y
+  lda dirlog_idx
+  clc
+  adc #$0008
+  sta dirlog_idx
+  sep #$20
+  .as
+  ; load dirent info
+  txy                          ; restore entry index to Y
+  dey
+  lda [dirptr_addr], y         ; load bank
+  clc
+  adc #$c0
+  sta dirent_bank
+  dey
+  dey
+  rep #$20
+  .al
+  lda [dirptr_addr], y         ; load address
+  sta dirent_addr
+  sep #$20
+  .as
+
+  ; Set up longptr to point at filename (offset 6 in the dirent)
+  rep #$20
+  .al
+  lda dirent_addr
+  clc
+  adc #6                       ; skip past size/type to filename
+  sta longptr
+  sep #$20
+  .as
+  lda dirent_bank
+  sta longptr+2
+
+  ; append selected dir name to current working directory
+  ldx #$0000
+_find_path_end
+  lda FILESEL_CWD, x
+  beq _path_end_found
+  inx
+  bra _find_path_end
+_path_end_found
+  dex
+  lda FILESEL_CWD, x
+  cmp #$2f
+  beq _copy_new_path
+  inx
+_copy_new_path
+  lda #$2f
+  sta FILESEL_CWD, x
+  inx
+  ldy #$0000
+_copy_new_path_loop
+  lda [longptr], y             ; read filename from ROM via indirect long
+  sta FILESEL_CWD, x
+  beq +
+  inx
+  iny
+  bra _copy_new_path_loop
++ lda #$00
+  ; kill trailing /
+  dex
+  sta FILESEL_CWD, x
+
+  ; request directory listing
+  jsr filesel_request_filelist
+  rep #$20
+  .al
+  lda #$0000
+  sta dirptr_addr
+  sta dirstart_addr
+  sep #$20
+  .as
+  sta filesel_sel
+  sta direntry_xscroll
+  sta direntry_xscroll_state
+  lda #$01
+  sta filesel_dirty
+  rts
+
+; =============================================
+; select_parent - Go up one directory level
+; =============================================
+select_parent
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  ldx #$0000
+- lda FILESEL_CWD, x
+  beq _parent_end_found
+  inx
+  bra -
+_parent_end_found
+  cpx #$0001
+  beq _cwd_is_root
+- lda FILESEL_CWD, x
+  cmp #$2f
+  beq +
+  dex
+  bra -
++ cpx #$0000
+  bne +
+  inx
++ lda #$00
+  sta FILESEL_CWD, x
+  bra _parent_do_chdir
+_cwd_is_root
+  rts
+_parent_do_chdir
+  jsr filesel_request_filelist
+  rep #$20
+  .al
+  lda dirlog_idx
+  sec
+  sbc #$0008
+  sta dirlog_idx
+  ldy #$0000
+  lda [dirlog_idx], y          ; load dirstart_addr
+  sta dirstart_addr
+  iny
+  iny
+  sep #$20
+  .as
+  lda [dirlog_idx], y          ; load dirstart_bank
+  sta dirstart_bank
+  iny
+  rep #$20
+  .al
+  lda [dirlog_idx], y          ; load dirptr_addr
+  sta dirptr_addr
+  iny
+  iny
+  sep #$20
+  .as
+  lda [dirlog_idx], y          ; load dirptr_bank
+  sta dirptr_bank
+  iny
+  rep #$20
+  .al
+  lda [dirlog_idx], y          ; load filesel_sel
+  sta filesel_sel
+  sep #$20
+  .as
+  lda #$01
+  sta filesel_dirty
+  rts
+
+; =============================================
+; select_spc - Tell MCU to load an SPC file
+; =============================================
+select_spc
+  .databank 0
+  .dpage 0
+  dey
+  rep #$20
+  .al
+  lda [dirptr_addr], y
+  and #$00ff
+  sta MCU_PARAM+6
+  dey
+  dey
+  lda [dirptr_addr], y
+  sta MCU_PARAM+4
+  lda #FILESEL_CWD & $ffff
+  sta MCU_PARAM
+  sep #$20
+  .as
+  lda #FILESEL_CWD >> 16
+  sta MCU_PARAM+2
+  lda #$00
+  sta MCU_PARAM+3
+  lda #CMD_LOADSPC
+  sta MCU_CMD
+_wait_spc
+  lda MCU_CMD
+  cmp #$00
+  bne _wait_spc
+  jsr spcplayer
+  rts
+
+; =============================================
+; open_context_menu - Y button context menu dispatch
+; =============================================
+open_context_menu
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  rep #$20
+  .al
+  lda filesel_sel
+  and #$00ff
+  asl
+  asl
+  tay
+  sep #$20
+  .as
+  iny
+  iny
+  iny
+  lda [dirptr_addr], y
+  cmp #TYPE_ROM
+  beq _ctx_is_file
+  cmp #TYPE_SPC
+  beq _ctx_is_spc
+  cmp #TYPE_SUBDIR
+  beq _ctx_is_dir
+  cmp #TYPE_PARENT
+  beq _ctx_is_parent
+_open_context_menu_cont
+  rts
+_ctx_is_file
+  ; save selected file path to MCU_PARAM
+  dey
+  rep #$20
+  .al
+  lda [dirptr_addr], y
+  and #$00ff
+  sta MCU_PARAM+6
+  dey
+  dey
+  lda [dirptr_addr], y
+  sta MCU_PARAM+4
+  lda #FILESEL_CWD & $ffff
+  sta MCU_PARAM
+  sep #$20
+  .as
+  lda #FILESEL_CWD >> 16
+  sta MCU_PARAM+2
+  lda #$00
+  sta MCU_PARAM+3
+  jsr filesel_contextmenu_file
+  bra _open_context_menu_cont
+_ctx_is_parent
+  bra _open_context_menu_cont
+_ctx_is_dir
+  bra _open_context_menu_cont
+_ctx_is_spc
+  bra _open_context_menu_cont
+
+; =============================================
+; add_selected_file_to_favorites - MCU command (JSL entry)
+; =============================================
+add_selected_file_to_favorites
+  .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  lda #$01
+  jsr hide_cursor
+  jsr draw_loading_window
+  jsr waitblank
+  lda #$00
+  sta SNES_CMD
+  lda #CMD_ADD_FAVORITE_ROM
+  sta MCU_CMD
+- lda SNES_CMD
+  cmp #$55
+  beq +
+  cmp #$aa
+  beq +
+  bra -
++ lda #$55
+  sta MCU_CMD
+  jsr pop_window
+  plp
+  rtl
+
+; =============================================
+; setup_224 - Configure 224-line display mode
+; =============================================
+setup_224
+  .databank 0
+  .dpage 0
+  php
+  rep #$30
+  .xl
+  .al
+  lda #18
+  sta listdisp
+  dec a
+  cmp filesel_sel
+  bmi _setup_224_adjsel
+  bra +
+_setup_224_adjsel
+  sta filesel_sel
++
+  sep #$20
+  .as
+  lda #$0b
+  sta $2110
+  lda #$00
+  sta $2110
+  ora #$08
+  sta $2133
+  lda #$01
+  sta filesel_dirty
+  lda #space64 >> 16
+  ldx #space64 & $ffff
+  sta print_bank
+  stx print_src
+  stz print_pal
+  lda #64
+  sta print_count
+  lda #27
+  sta print_y
+  stz print_x
+  jsr hiprint
+  lda #28
+  sta print_y
+  jsr hiprint
+  jsr hiprint
+
+  plp
+  rts
+
+; =============================================
+; filesel_statusbar - Draw status bar with key hints
+; =============================================
+filesel_statusbar
+  .databank 0
+  .dpage 0
+  pha
+  phx
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda #text_statusbar_keys >> 16
+  sta print_bank
+  rep #$20
+  .al
+  lda #text_statusbar_keys & $ffff
+  sta print_src
+  sep #$20
+  .as
+  lda #$00
+  sta print_pal
+  lda #$02
+  sta print_x
+  lda #$40
+  sta print_count
+  lda listdisp
+  clc
+  adc #$0a
+  sta print_y
+  jsr hiprint
+  plp
+  plx
+  pla
+  rts
+
+; =============================================
+; select_last_file - Recent games popup (JSL entry)
+; =============================================
+select_last_file
+  .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda ST_NUM_RECENT_GAMES
+  sta num_recent_games
+  stz recent_sel
+  bne +
+  plp
+  rtl
++ lda #text_last >> 16
+  sta window_tbank
+  ldx #text_last & $ffff
+  stx window_taddr
+  lda last_win_x
+  sta window_x
+  inc a
+  inc a
+  pha
+  lda last_win_y
+  sta window_y
+  inc a
+  pha
+  lda last_win_w
+  sta window_w
+  lda ST_NUM_RECENT_GAMES
+  inc a
+  inc a
+  sta window_h
+  jsr push_window
+  lda num_recent_games
+  sta listsel_max
+  jsr draw_window
+  stz print_pal
+  lda #LAST_GAME >> 16
+  ldx #LAST_GAME & $ffff
+  sta print_bank
+  stx print_src
+  stz print_pal
+  pla
+  sta print_y
+  pla
+  sta print_x
+- lda #56
+  sta print_count
+  jsr hiprint
+  inc print_src+1
+  inc print_y
+  dec num_recent_games
+  bne -
+  lda #$01
+  sta listsel_step
+  stz listsel_pickbutton
+  jsr menu_select
+  sta MCU_PARAM
+  cmp #$ff
+  beq +
+  sep #$20
+  .as
+  lda #CMD_LOADLAST
+  jsr game_handshake
++ jsr pop_window
+  plp
+  rtl
+
+; =============================================
+; select_favorite_file - Favorites popup (JSL entry)
+; =============================================
+select_favorite_file
+  .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda #$00
+  sta listsel_backup
+_select_favorite_redraw
+  lda ST_NUM_FAVORITE_GAMES
+  bne +
+  jmp _select_favorite_file_out
++ sta num_favorite_games
+  lda #text_favorite >> 16
+  sta window_tbank
+  ldx #text_favorite & $ffff
+  stx window_taddr
+  lda last_win_x
+  sta window_x
+  inc a
+  inc a
+  pha
+  lda last_win_y
+  sta window_y
+  inc a
+  pha
+  lda last_win_w
+  sta window_w
+  lda num_favorite_games
+  inc a
+  inc a
+  sta window_h
+  jsr push_window
+  lda num_favorite_games
+  sta listsel_max
+  dec a
+  cmp listsel_backup
+  bcs +
+  sta listsel_backup
++ lda listsel_backup
+  sta listsel_sel
+  jsr draw_window
+  stz print_pal
+  lda #FAVORITE_GAMES >> 16
+  ldx #FAVORITE_GAMES & $ffff
+  sta print_bank
+  stx print_src
+  stz print_pal
+  pla
+  sta print_y
+  pla
+  sta print_x
+- lda #56
+  sta print_count
+  jsr hiprint
+  inc print_src+1
+  inc print_y
+  dec num_favorite_games
+  bne -
+  stz listsel_dirty
+  jsr enable_screen_update
+_select_favorite_choose
+  lda #$01
+  sta listsel_step
+  sta listsel_pickbutton
+  jsr menu_select_noinit
+  sta listsel_backup
+  sta MCU_PARAM
+  cmp #$ff
+  beq _select_favorite_file_done
+  lda listsel_pickbutton
+  cmp #$00
+  beq _select_favorite_file_play
+  cmp #$01
+  beq _select_favorite_file_context_menu
+  bra _select_favorite_file_done
+_select_favorite_file_play
+  sep #$20
+  .as
+  lda #CMD_LOADFAVORITE
+  jsr game_handshake
+  bra _select_favorite_file_done
+_select_favorite_file_context_menu
+  jsr filesel_favorites_contextmenu
+  lda listsel_dirty
+  bne +
+  jmp _select_favorite_choose
++ stz listsel_dirty
+  jsr pop_window
+  jsr disable_screen_update
+  jmp _select_favorite_redraw
+_select_favorite_file_done
+  jsr pop_window
+_select_favorite_file_out
+  jsr enable_screen_update
+  plp
+  rtl
+
+; =============================================
+; remove_selected_favorite_file - MCU command (JSL entry)
+; =============================================
+remove_selected_favorite_file
+  .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  lda #$01
+  jsr hide_cursor
+  jsr draw_loading_window
+  jsr waitblank
+  lda #$00
+  sta SNES_CMD
+  lda #CMD_REMOVE_FAVORITE_ROM
+  sta MCU_CMD
+- lda SNES_CMD
+  cmp #$55
+  beq +
+  cmp #$aa
+  beq +
+  bra -
++ lda #$55
+  sta MCU_CMD
+  sta listsel_dirty
+  jsr pop_window
+  plp
+  rtl
+
+; =============================================
+; scroll_direntry_clean - Reset scroll state and redraw
+; =============================================
+scroll_direntry_clean
+  .databank 0
+  .dpage 0
+  lda #$01
+  sta direntry_xscroll_state
+  stz direntry_xscroll
+  stz direntry_xscroll_wait
+  jsr scroll_direntry
+  stz direntry_xscroll_state
+  stz direntry_xscroll
+  rts
+
+; =============================================
+; scroll_direntry - Animate long filename scrolling
+; =============================================
+scroll_direntry
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  ldy filesel_sel
+  lda direntry_xscroll_state
+  bne +
+  lda direntry_fits, y
+  bne _scroll_direntry_enter
+  rts
+_scroll_direntry_enter
+  lda #$01
+  sta direntry_xscroll_state
+  stz direntry_xscroll_wait
++ lda direntry_xscroll_wait
+  beq +
+  dec direntry_xscroll_wait
+  rts
+
++ lda direntry_xscroll
+  bne _scroll_direntry_scrollfast
+  lda #$28
+  bra +
+_scroll_direntry_scrollfast
+  lda #$10
++ sta direntry_xscroll_wait
+  tya
+  clc
+  adc #$09
+  sta cursor_y
+  lda #$02
+  sta cursor_x
+  rep #$20
+  .al
+  lda filesel_sel
+  asl
+  asl
+  tay
+  lda [dirptr_addr], y
+  sta dirent_addr
+  iny
+  iny
+  sep #$20
+  .as
+  lda [dirptr_addr], y         ; load fileinfo bank
+  clc
+  adc #$c0
+  sta dirent_bank
+  iny
+  lda [dirptr_addr], y
+  iny
+  sta dirent_type
+  ldy filesel_sel
+  sty direntry_fits_idx
+  phy
+  jsr print_direntry
+  ply
+  lda direntry_fits, y
+  bne +
+  lda #$ff
+  sta direntry_xscroll_state
+  lda #$28
+  sta direntry_xscroll_wait
++ lda direntry_xscroll_state
+  clc
+  adc direntry_xscroll
+  sta direntry_xscroll
+  bne +
+  lda #$01
+  sta direntry_xscroll_state
++ rts
+
+; =============================================
+; filesel_request_filelist - Ask MCU to read directory
+; =============================================
+filesel_request_filelist
+  .databank 0
+  .dpage 0
+  php
+  rep #$30
+  .al
+  .xl
+  lda #FILESEL_CWD & $ffff
+  sta MCU_PARAM
+  lda #ROOT_DIR & $ffff
+  sta MCU_PARAM+4
+  sep #$20
+  .as
+  lda #FILESEL_CWD >> 16
+  sta MCU_PARAM+2
+  lda #ROOT_DIR >> 16
+  sta MCU_PARAM+6
+  lda #TYPE_PARENT
+  sta MCU_PARAM+8
+  lda #TYPE_SUBDIR
+  sta MCU_PARAM+9
+  lda #TYPE_ROM
+  sta MCU_PARAM+10
+  lda #TYPE_SPC
+  sta MCU_PARAM+11
+  lda #$00
+  sta MCU_PARAM+12
+  sta SNES_CMD
+  lda #CMD_READDIR
+  sta MCU_CMD
+  jsr hide_cursor
+  jsr draw_loading_window
+_filesel_request_filelist_wait_mcu
+  jsl WRAM_WAIT_MCU
+  jsr pop_window
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  ldy #$0002
+- lda [dirstart_addr], y
+  beq +
+  iny
+  iny
+  iny
+  iny
+  bra -
++ rep #$20
+  .al
+  tya
+  and #$fffc
+  sta dirend_addr
+  plp
+  rts
+
+; =============================================
+; Stubs for unported modules
+; These return immediately (or return "no selection").
+; Will be replaced when menu.a65, time.a65, spcplay.a65 are ported.
+; =============================================
+
+printtime
+  .databank 0
+  rts
+
+game_handshake
+  .databank 0
+  rts
+
+spcplayer
+  .databank 0
+  rts
+
+mainmenu
+  .databank 0
+  rts
+
+filesel_contextmenu_file
+  .databank 0
+  rts
+
+filesel_favorites_contextmenu
+  .databank 0
+  rts
+
+; menu_select / menu_select_noinit: return $FF (no selection)
+menu_select
+menu_select_noinit
+  .databank 0
+  lda #$ff
+  rts

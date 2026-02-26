@@ -136,7 +136,7 @@ listsel_backup     = $00C7  ; .byte - backup of selection
 listdisp           = $00C8  ; .word - number of displayable list entries
 
 ; =============================================
-; File selector state ($00CA-$00F2)
+; File selector state ($00CA-$00F5)
 ; =============================================
 dirptr_addr       = $00CA  ; .word - current dir entry address
 dirptr_bank       = $00CC  ; .word - current dir entry bank
@@ -161,6 +161,27 @@ cursor_y          = $00ED  ; .byte - current cursor position (y)
 fd_addr           = $00EE  ; .word - file descriptor address
 fd_bank           = $00F0  ; .byte - file descriptor bank
 fd_fnoff          = $00F1  ; .word - filename offset in file descriptor
+num_recent_games    = $00F3  ; .byte - number of recent games (from MCU)
+num_favorite_games  = $00F4  ; .byte - number of favorite games (from MCU)
+recent_sel          = $00F5  ; .byte - recent games selection
+
+; =============================================
+; Filesel buffers ($0400-$0505)
+; These are above the HDMA table area and below the stack.
+; =============================================
+; dirlog format (8 bytes per entry, 24 entries max):
+;   dirstart_addr  2
+;   dirstart_bank  1
+;   dirptr_addr    2
+;   dirptr_bank    1
+;   filesel_sel    2
+;   total          8 bytes
+dirlog                  = $0400  ; 192 bytes - directory navigation log
+direntry_fits           = $04C0  ; 32 bytes - per-entry "overflows" flags
+direntry_xscroll_state  = $04E0  ; .word - scroll state machine
+direntry_xscroll        = $04E2  ; .word - current scroll offset
+direntry_xscroll_wait   = $04E4  ; .word - scroll delay counter
+current_dir             = $04E6  ; 160 bytes - current directory path buffer
 
 ; =============================================
 ; HDMA tables ($0100-$02FF, double-buffer at $0300)

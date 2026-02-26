@@ -224,6 +224,19 @@ loading_win_y .byte 28
 loading_win_w .byte 34
 loading_win_h .byte 1
 
+; Filesel UI strings
+text_statusbar_keys .text "A:Select B:Back X:Menu Y:Context"
+                    .byte 0
+text_last           .text "Recent games"
+                    .byte 0
+text_favorite       .text "Favorite games"
+                    .byte 0
+
+; Window dimensions for "last game" / favorites popup
+last_win_x  .byte 2
+last_win_y  .byte 12
+last_win_w  .byte 60
+
 ; =============================================
 ; Ball sprite tile data (8x8, 4bpp = 32 bytes)
 ; Simple filled circle pattern

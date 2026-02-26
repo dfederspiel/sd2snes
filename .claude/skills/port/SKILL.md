@@ -134,6 +134,21 @@ Our NMI uses Strategy A (DBR=$00) since there are more register writes than WRAM
 
 ## Macro Conversion
 
+**Label placement**: Labels go BEFORE directives in 64tass:
+```asm
+; CORRECT:
+AllocStack .macro
+  ; ...
+.endm
+
+StackParam .function offset
+  = _locals + offset + $05
+.endf                          ; use .endf, NOT .endfunction
+
+; WRONG — "label required" error:
+.macro AllocStack
+```
+
 ```asm
 ; snescom (cpp macros via #define):
 ; DMA7 #$01, src, $2118, #size
@@ -187,12 +202,35 @@ When porting a file from `snes/foo.a65` to `snes-64tass/foo.a65`:
 4. Remove `:` chaining (separate into newlines)
 5. Replace `@` / `!` / `^` address prefixes
 6. Replace `.link page` with `* =` addressing
-7. Add `.databank` directives matching runtime DBR state
-8. Add `.include` in main.a65 (no separate linker)
-9. Build and fix any remaining errors
-10. Compare behavior in bsnes against snescom version
+7. Add `.databank` and `.dpage` directives matching runtime state
+8. Ensure EVERY function has its own `.databank`/`.dpage` (they're global state!)
+9. Add `.include` in main.a65 (no separate linker)
+10. Build and fix any remaining errors
+11. Compare behavior in bsnes against snescom version
 
 ## Porting Gotchas (Lessons Learned)
+
+### .databank and .dpage state persists across labels (CRITICAL)
+64tass `.databank` and `.dpage` are **global assembler state** — they do NOT reset at function boundaries. After `hiprint` sets `.databank ?` / `.dpage ?`, ALL subsequent functions in the same file inherit that unknown state and will error on absolute addressing.
+
+**Rule**: Every function must redeclare `.databank` and `.dpage` at its entry:
+```asm
+my_function
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  ; ... code using WRAM vars works now ...
+```
+
+### MVN changes DBR — declare .databank after it
+After `mvn $7e, $7e`, DBR=$7E. Use `.databank $7e` (not `.databank ?`) so `dec window_h` etc. validate correctly. Stack-relative ops (`lda $07,s`) don't use DBR so they work regardless.
+
+### ROM constant access from .databank 0
+With `.databank 0`, labels in bank $C0 (ROM) auto-select long (4-byte) addressing due to bank mismatch. WRAM vars at $00xx use absolute (2-byte) since they match bank $00. This is correct for HiROM.
+
+### AllocStack DP conflict — avoid stack-allocated locals
+When `AllocStack` sets DP dynamically via `TCD`, 64tass can't distinguish DP-relative locals ($00-$03) from absolute WRAM vars ($0040-$00FF). snescom uses `!` to force absolute — 64tass has no equivalent. **Solution**: use WRAM scratch variables (window_tmp, print_temp) instead.
 
 ### .xl/.xs MUST be declared in every function (CRITICAL)
 64tass does NOT propagate register size state across `jsr`/`rts` boundaries or `jml` targets. If a function uses 16-bit index registers, it MUST declare `.xl` (and ideally `rep #$10`) at its entry — even if the caller already set 16-bit mode.
@@ -285,17 +323,21 @@ Unlike snescom which may have implicit clearing, 64tass builds need explicit DMA
 | reset.a65 | Expanded | Full NMI: tile DMA, bar positioning, brightness fade |
 | main.a65 | Expanded | setup_gfx, genfonts, video_init, poc_display, emu_mode |
 
-### Milestone 3 — Input + sprites (NEXT)
+### Milestone 3 — Input + sprites + UI building blocks (COMPLETE)
+| File | Status | Notes |
+|------|--------|-------|
+| pad.a65 | Done | All 12 buttons, edge detection |
+| OAM/sprites | Done | Bouncing ball sprite demo |
+| stack.i65 | Done | AllocStack/FreeStack macros |
+| common.a65 | Done | strlen, bin2dec16 utilities |
+| ui.a65 | Done | All 12 functions: hiprint, loprint, draw_window, push/pop_window, window_greyout, hide_cursor, right_align, set_bar_color, draw_loading_window, disable/enable_screen_update |
+| data.i65 | Expanded | Window, list selector, filesel WRAM vars |
+| const.a65 | Expanded | Window frame chars, space64, loading data |
+
+### Milestone 4 — File browser (IN PROGRESS)
 | File | Priority | Key challenges |
 |------|----------|----------------|
-| pad.a65 | High | Joypad reading — enables interaction |
-| logo.a65 | Medium | Logo tile data — or create new sprite graphics |
-| OAM/sprites | Medium | OAM init, sprite tile loading, position control |
-| filesel.a65 | Low | MCU communication — only useful on real hardware |
-| menu.a65 | Low | Menu system — depends on filesel |
-
-**Milestone 3 goals**:
-- Joypad input (d-pad, buttons) with edge detection
-- Basic sprite rendering (load tiles, set OAM entries, enable OBJ layer)
-- Controllable sprite as a learning exercise
-- Selection bar movement driven by joypad (cursor navigation)
+| filesel.a65 | High | Directory rendering, navigation, MCU communication |
+| menu.a65 | Medium | Menu system, game_handshake, context menus |
+| time.a65 | Low | Clock display (stub for now) |
+| spcplay.a65 | Low | SPC player (stub for now) |

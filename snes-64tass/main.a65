@@ -1132,6 +1132,7 @@ clear_cgram
 .include "ui.a65"
 .include "common.a65"
 .include "pad.a65"
+.include "filesel.a65"
 .include "dma.a65"
 .include "font.a65"
 .include "palette.a65"
