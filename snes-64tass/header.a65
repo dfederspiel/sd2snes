@@ -5,7 +5,7 @@
 ; Placed at $C0FF00 to match original layout
 * = $C0FF00
 nmihook_ptr
-  .word 0           ; placeholder for nmihook (overwritten at runtime)
+  .word nmihook & $ffff  ; pointer to nmihook data for MCU's snescmd_prepare_nmihook()
 
 RESET
   sei

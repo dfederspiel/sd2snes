@@ -77,6 +77,7 @@ fileselloop
   bcc fileselloop
   stz isr_done
   jsr printtime
+  jsr update_ball
   jsr filesel_updates
   lda filesel_dirty
   cmp #$01
@@ -1504,17 +1505,8 @@ _filesel_request_filelist_wait_mcu
 
 ; =============================================
 ; Stubs for unported modules
-; These return immediately (or return "no selection").
-; Will be replaced when menu.a65, time.a65, spcplay.a65 are ported.
+; Will be replaced when menu.a65 and spcplay.a65 are ported.
 ; =============================================
-
-printtime
-  .databank 0
-  rts
-
-game_handshake
-  .databank 0
-  rts
 
 spcplayer
   .databank 0
@@ -1532,9 +1524,122 @@ filesel_favorites_contextmenu
   .databank 0
   rts
 
-; menu_select / menu_select_noinit: return $FF (no selection)
+; =============================================
+; menu_select / menu_select_noinit
+; Helper routine to select a list entry from a pre-drawn window.
+;
+; Input:
+;   window_x, window_y, window_w: for select bar positioning
+;   listsel_max: number of list entries
+;   listsel_step: Y spacing between entries (tile rows)
+;   listsel_pickbutton: 00 = only A selects, 01 = A and Y select
+;
+; Output:
+;   A = selected index (0-based), or $FF if cancelled
+;   listsel_pickbutton = 00 (A), 01 (Y), or $FF (B/cancel)
+;
+; Uses Mode 7 signed multiply ($211B/$211C → $2134) for bar_yl calc.
+; =============================================
 menu_select
+  .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  stz listsel_sel
+  bra +
 menu_select_noinit
   .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
++
+  lda window_x
+  inc a
+  inc a
+  sta bar_xl
+  lda window_w
+  sec
+  sbc #$04
+  sta bar_wl
+  ; Compute bar_yl = window_y + listsel_sel * listsel_step
+  ; using Mode 7 signed multiply: $211B * $211C → $2134 (16-bit result)
+  lda listsel_sel
+  sta $211b
+  stz $211b
+  lda listsel_step
+  sta $211c
+  lda window_y
+  clc
+  adc $2134
+  sta bar_yl
+
+_menu_sel_loop
+  lda isr_done
+  beq _menu_sel_loop
+  stz isr_done
+  jsr printtime
+  jsr read_pad
+  lda pad_up
+  bne _menu_sel_up
+  lda pad_down
+  bne _menu_sel_down
+  lda pad_a
+  bne _menu_sel_btn_a
+  lda pad_y
+  bne _menu_sel_btn_y
+  lda pad_b
+  bne _menu_sel_btn_b
+  bra _menu_sel_loop
+
+_menu_sel_up
+  lda listsel_sel
+  beq _menu_sel_loop       ; already at top
+  dec listsel_sel
+  lda bar_yl
+  sec
+  sbc listsel_step
+  sta bar_yl
+  bra _menu_sel_loop
+
+_menu_sel_down
+  lda listsel_sel
+  inc a
+  cmp listsel_max
+  beq _menu_sel_loop       ; already at bottom
+  inc listsel_sel
+  lda bar_yl
+  clc
+  adc listsel_step
+  sta bar_yl
+  bra _menu_sel_loop
+
+_menu_sel_btn_a
+  lda #$00
+  sta listsel_pickbutton
+  lda listsel_sel
+  bra _menu_sel_exit
+
+_menu_sel_btn_y
+  ; Only allow Y if listsel_pickbutton was set to $01 by caller
+  lda listsel_pickbutton
+  cmp #$01
+  bne _menu_sel_loop       ; Y not allowed, ignore
+  lda #$01
+  sta listsel_pickbutton
+  lda listsel_sel
+  bra _menu_sel_exit
+
+_menu_sel_btn_b
   lda #$ff
+  sta listsel_pickbutton
+  ; A = $FF (cancel) — falls through
+
+_menu_sel_exit
+  plp
   rts

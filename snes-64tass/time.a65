@@ -1,0 +1,1066 @@
+; time.a65 - Clock display and time setting dialog (64tass port)
+;
+; Ported from snes/time.a65. Provides:
+;   - printtime: display current time each frame (called from fileselloop)
+;   - gettime/settime: read/write SRTC hardware
+;   - rendertime: format BCD time as "YYYY-MM-DD HH:MM:SS" string
+;   - time_init: clock editing dialog with BCD field navigation
+;   - rtc_init: boot-time "Please set the time" window
+;
+; Key porting changes from original:
+;   - DBR stays $00 throughout (no PHB/PLB to $80)
+;   - No AllocStack — time_init uses WRAM work vars instead of stack locals
+;   - Global time_s1..time_y100 double as the working copy during editing
+;   - rendertime uses longptr for indirect reads (not DP-relative [ptr],y)
+;   - `inc`/`dec` accumulator → `inc a`/`dec a`
+;   - `@label` → auto-long; `!label` → auto-absolute
+;   - No `:` chaining
+
+; =============================================
+; ROM data tables
+; =============================================
+
+; timebox_data: 6 entries × 3 bytes
+; For each editable field: string offset, selection width, BCD offset
+timebox_data
+  .byte  0, 4, 9   ; year
+  .byte  5, 2, 8   ; month
+  .byte  8, 2, 6   ; day
+  .byte 11, 2, 4   ; hour
+  .byte 14, 2, 2   ; minute
+  .byte 17, 2, 0   ; second
+
+; time_month: max day (tens, ones) for each month
+; February ones digit is adjusted by is_leapyear_feb
+time_month
+  .byte 3, 1   ; Jan: 31
+  .byte 2, 8   ; Feb: 28 (29 if leap)
+  .byte 3, 1   ; Mar: 31
+  .byte 3, 0   ; Apr: 30
+  .byte 3, 1   ; May: 31
+  .byte 3, 0   ; Jun: 30
+  .byte 3, 1   ; Jul: 31
+  .byte 3, 1   ; Aug: 31
+  .byte 3, 0   ; Sep: 30
+  .byte 3, 1   ; Oct: 31
+  .byte 3, 0   ; Nov: 30
+  .byte 3, 1   ; Dec: 31
+
+; =============================================
+; time_init - Clock editing dialog
+; Parameters pushed on stack before JSR:
+;   SP+3,SP+4 = p_time_addr (word, via PEA)
+;   SP+5      = p_time_bank (byte)
+;   SP+6      = p_time_y    (byte)
+;   SP+7      = p_time_x    (byte)
+; Returns: carry set = saved, carry clear = cancelled
+; =============================================
+time_init
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  ; Read stack parameters into WRAM work variables
+  lda 7, s             ; p_time_x
+  sta time_work_x
+  lda 6, s             ; p_time_y
+  sta time_work_y
+  lda 5, s             ; p_time_bank
+  sta time_work_bank
+  rep #$20
+  .al
+  lda 3, s             ; p_time_addr
+  sta time_work_addr
+  sep #$20
+  .as
+  ; Read SRTC into global time vars
+  jsr gettime
+  ; Copy from [time_work_addr] → globals (the working copy)
+  jsr time_make_working_copy
+  stz time_sel
+  stz time_exit
+  stz time_cancel
+
+time_update
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  ; Render current time to stringbuf
+  lda #time_s1 >> 16            ; = 0
+  pha
+  pea time_s1 & $ffff           ; push $02A0
+  jsr rendertime
+  plx                           ; clean up addr
+  pla                           ; clean up bank
+  ; Display stringbuf at dialog position
+  lda #stringbuf >> 16
+  sta print_bank
+  ldx #stringbuf & $ffff
+  stx print_src
+  lda time_work_x
+  sta print_x
+  lda time_work_y
+  sta print_y
+  stz print_pal
+  lda #20
+  sta print_count
+  jsr hiprint
+  ; Position selection bar based on current field
+  lda time_sel
+  asl a
+  clc
+  adc time_sel                  ; A = time_sel * 3
+  ; Zero-extend A to 16-bit for TAX (clear hidden B)
+  rep #$20
+  .al
+  and #$00ff
+  tax
+  sep #$20
+  .as
+  lda timebox_data, x           ; string offset
+  clc
+  adc time_work_x
+  sta bar_xl
+  lda time_work_y
+  dec a
+  sta bar_yl
+  inx
+  lda timebox_data, x           ; selection width
+  sta bar_wl
+  inx
+  lda timebox_data, x           ; BCD field offset
+  sta time_ptr
+  ; Input loop
+timeloop1
+  lda isr_done
+  lsr a
+  bcc timeloop1
+  stz isr_done
+  jsr read_pad
+  lda pad_right
+  bne tkey_right
+  lda pad_left
+  bne tkey_left
+  lda pad_down
+  bne tkey_down
+  lda pad_up
+  bne tkey_up
+  lda pad_b
+  bne tkey_b
+  lda pad_a
+  bne tkey_a
+  ; Check exit/cancel flags
+  lda time_exit
+  bne timesave
+  lda time_cancel
+  bne timenosave
+  bra timeloop1
+
+timesave
+  jsr time_save_working_copy
+  sec
+  rts
+
+timenosave
+  clc
+  rts
+
+tkey_b
+  inc time_cancel
+  jmp time_update
+
+tkey_a
+  inc time_exit
+  jmp time_update
+
+tkey_left
+  jsr time_key_left
+  jmp time_update
+
+tkey_right
+  jsr time_key_right
+  jmp time_update
+
+tkey_up
+  jsr time_key_up
+  jmp time_update
+
+tkey_down
+  jsr time_key_down
+  jmp time_update
+
+; =============================================
+; time_key_left/right - Navigate fields
+; =============================================
+time_key_left
+  .databank 0
+  .dpage 0
+  lda time_sel
+  beq +
+  dec time_sel
++ rts
+
+time_key_right
+  .databank 0
+  .dpage 0
+  lda time_sel
+  cmp #5
+  beq +
+  inc time_sel
++ rts
+
+; =============================================
+; time_key_up - Increment current BCD field
+; =============================================
+time_key_up
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda time_ptr
+  cmp #4
+  beq time_inc_hour_jmp
+  cmp #6
+  beq time_inc_day_jmp
+  cmp #8
+  beq time_inc_mon_jmp
+  cmp #9
+  beq time_inc_year_jmp
+  ; Minutes or seconds: generic BCD increment
+  ; Zero-extend time_ptr to 16-bit for index register
+  rep #$20
+  .al
+  and #$00ff
+  tax
+  sep #$20
+  .as
+  lda time_s1, x
+  inc a
+  cmp #$0a
+  bmi time_inc_minsec1_normal
+  stz time_s1, x
+  lda time_s10, x
+  inc a
+  cmp #$06
+  bmi time_inc_minsec10_normal
+  stz time_s10, x
+  bra +
+time_inc_minsec10_normal
+  sta time_s10, x
+  bra +
+time_inc_minsec1_normal
+  sta time_s1, x
++ rts
+
+time_inc_hour_jmp
+  jsr time_inc_hour
+  rts
+
+time_inc_day_jmp
+  jsr time_inc_day
+  rts
+
+time_inc_mon_jmp
+  jsr time_inc_mon
+  rts
+
+time_inc_year_jmp
+  jsr time_inc_year
+  lda time_mon
+  jsr time_adjust_mon
+  rts
+
+; =============================================
+; time_inc_hour - BCD increment with 24h wrap
+; =============================================
+time_inc_hour
+  .databank 0
+  .dpage 0
+  lda time_h10
+  cmp #$02
+  bne time_inc_hour_normal
+  lda time_h1
+  inc a
+  cmp #$04
+  bmi +
+  stz time_h1
+  stz time_h10
+  rts
++ sta time_h1
+  rts
+time_inc_hour_normal
+  lda time_h1
+  inc a
+  cmp #$0a
+  bmi +
+  stz time_h1
+  inc time_h10
+  rts
++ sta time_h1
+  rts
+
+; =============================================
+; time_inc_day - BCD increment with month-aware wrap
+; =============================================
+time_inc_day
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda time_mon
+  dec a
+  asl a
+  ; Zero-extend for index
+  rep #$20
+  .al
+  and #$00ff
+  tax
+  sep #$20
+  .as
+  lda time_month, x
+  cmp time_d10
+  bne time_inc_day_normal
+  inx
+  jsr is_leapyear_feb
+  lda time_month, x
+  dec a
+  adc #$00                    ; add carry from is_leapyear_feb
+  cmp time_d1
+  bpl +
+  stz time_d1
+  stz time_d10
++ inc time_d1
+  rts
+time_inc_day_normal
+  lda time_d1
+  inc a
+  cmp #$0a
+  bmi +
+  stz time_d1
+  inc time_d10
+  rts
++ sta time_d1
+  rts
+
+; =============================================
+; time_inc_mon - Increment month with wrap (1-12)
+; =============================================
+time_inc_mon
+  .databank 0
+  .dpage 0
+  lda time_mon
+  inc a
+  cmp #13
+  bmi +
+  lda #$01
++ jsr time_adjust_mon
+  rts
+
+; =============================================
+; time_adjust_mon - Clamp day to valid range for month A
+; =============================================
+time_adjust_mon
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  sta time_mon
+  dec a
+  asl a
+  ; Zero-extend for index
+  rep #$20
+  .al
+  and #$00ff
+  tax
+  sep #$20
+  .as
+  lda time_d10
+  cmp time_month, x
+  bcs time_mon_adjust
+  rts
+time_mon_adjust
+  php
+  inx
+  lda time_month, x
+  pha
+  jsr is_leapyear_feb        ; c=1 → leap year February
+  pla
+  adc #$00
+  plp
+  bne time_mon_doadjust
+  cmp time_d1
+  bcs +
+time_mon_doadjust
+  sta time_d1
+  dex
+  lda time_month, x
+  sta time_d10
++ rts
+
+; =============================================
+; time_inc_year - BCD increment year
+; =============================================
+time_inc_year
+  .databank 0
+  .dpage 0
+  lda time_y1
+  inc a
+  cmp #$0a
+  bmi time_inc_y1_normal
+  stz time_y1
+  lda time_y10
+  inc a
+  cmp #$0a
+  bmi time_inc_y10_normal
+  stz time_y10
+  inc time_y100
+  rts
+time_inc_y10_normal
+  sta time_y10
+  rts
+time_inc_y1_normal
+  sta time_y1
+  rts
+
+; =============================================
+; time_key_down - Decrement current BCD field
+; =============================================
+time_key_down
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda time_ptr
+  cmp #4
+  beq time_dec_hour_jmp
+  cmp #6
+  beq time_dec_day_jmp
+  cmp #8
+  beq time_dec_mon_jmp
+  cmp #9
+  beq time_dec_year_jmp
+  ; Minutes or seconds: generic BCD decrement
+  rep #$20
+  .al
+  and #$00ff
+  tax
+  sep #$20
+  .as
+  lda time_s1, x
+  dec a
+  cmp #$ff
+  bne time_dec_minsec1_normal
+  lda #$09
+  sta time_s1, x
+  lda time_s10, x
+  dec a
+  cmp #$ff
+  bne time_dec_minsec10_normal
+  lda #$05
+  sta time_s10, x
+  bra +
+time_dec_minsec10_normal
+  sta time_s10, x
+  bra +
+time_dec_minsec1_normal
+  sta time_s1, x
++ rts
+
+time_dec_hour_jmp
+  jsr time_dec_hour
+  rts
+
+time_dec_day_jmp
+  jsr time_dec_day
+  rts
+
+time_dec_mon_jmp
+  jsr time_dec_mon
+  rts
+
+time_dec_year_jmp
+  jsr time_dec_year
+  lda time_mon
+  jsr time_adjust_mon
+  rts
+
+; =============================================
+; time_dec_hour - BCD decrement with 24h wrap
+; =============================================
+time_dec_hour
+  .databank 0
+  .dpage 0
+  lda time_h1
+  dec a
+  cmp #$ff
+  bne time_dec_h1_normal
+  lda time_h10
+  bne time_dec_h10_normal
+  lda #$02
+  sta time_h10
+  lda #$03
+  sta time_h1
+  rts
+time_dec_h10_normal
+  lda #$09
+  sta time_h1
+  dec time_h10
+  rts
+time_dec_h1_normal
+  sta time_h1
+  rts
+
+; =============================================
+; time_dec_day - BCD decrement with month-aware wrap
+; =============================================
+time_dec_day
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda time_d10
+  beq +
+  lda time_d1
+  dec a
+  cmp #$ff
+  bne time_dec_d1_normal
+  bra time_dec_cont
++ lda time_d1
+  dec a
+  bne time_dec_d1_normal
+time_dec_cont
+  lda time_d10
+  bne time_dec_d10_normal
+  ; Wrap to max day of current month
+  lda time_mon
+  dec a
+  asl a
+  rep #$20
+  .al
+  and #$00ff
+  tax
+  sep #$20
+  .as
+  lda time_month, x
+  sta time_d10
+  inx
+  lda time_month, x
+  pha
+  jsr is_leapyear_feb
+  pla
+  adc #$00
+  sta time_d1
+  rts
+time_dec_d10_normal
+  lda #$09
+  sta time_d1
+  dec time_d10
+  rts
+time_dec_d1_normal
+  sta time_d1
+  rts
+
+; =============================================
+; time_dec_mon - Decrement month with wrap (12→1)
+; =============================================
+time_dec_mon
+  .databank 0
+  .dpage 0
+  lda time_mon
+  dec a
+  bne +
+  lda #12
++ jsr time_adjust_mon
+  rts
+
+; =============================================
+; time_dec_year - BCD decrement year
+; =============================================
+time_dec_year
+  .databank 0
+  .dpage 0
+  lda time_y1
+  dec a
+  cmp #$ff
+  bne time_dec_y1_normal
+  lda #$09
+  sta time_y1
+  lda time_y10
+  dec a
+  cmp #$ff
+  bne time_dec_y10_normal
+  lda #$09
+  sta time_y10
+  dec time_y100
+  rts
+time_dec_y10_normal
+  sta time_y10
+  rts
+time_dec_y1_normal
+  sta time_y1
+  rts
+
+; =============================================
+; is_leapyear_feb - Check if current month is Feb in a leap year
+; Returns: carry set = leap year February, carry clear = not
+; Uses: time_mon, time_y1, time_y10, time_y100, time_tmp
+; =============================================
+is_leapyear_feb
+  .databank 0
+  .dpage 0
+  lda time_mon
+  cmp #$02
+  bne is_leapyear_feb_no
+  ; Compute year mod 4: year = y10*10 + y1
+  lda time_y10
+  asl a
+  sta time_tmp
+  asl a
+  asl a
+  clc
+  adc time_tmp         ; A = y10 * 10
+  clc
+  adc time_y1          ; A = y10*10 + y1
+  sta time_tmp
+  and #$03
+  beq is_leapyear_4th  ; divisible by 4 → candidate
+is_leapyear_feb_no
+  clc
+  rts
+
+is_leapyear_4th
+  lda time_tmp          ; year=00? (century year)
+  beq +                 ; then check if century divisible by 400
+  sec                   ; else it's always a leap year
+  rts
++ lda time_y100         ; century divisible by 4?
+  clc
+  adc #10
+  and #$03
+  beq is_leapyear_400th
+  clc
+  rts
+
+is_leapyear_400th
+  sec
+  rts
+
+; =============================================
+; time_make_working_copy - Copy [time_work_addr] → time_s1..time_y100
+; Uses longptr for indirect long access.
+; =============================================
+time_make_working_copy
+  .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  ; Set up longptr from work variables
+  rep #$20
+  .al
+  lda time_work_addr
+  sta longptr
+  sep #$20
+  .as
+  lda time_work_bank
+  sta longptr+2
+  ; Copy 12 bytes from [longptr] → time_s1..time_y100
+  ldy #0
+- lda [longptr], y
+  sta time_s1, y
+  iny
+  cpy #12
+  bne -
+  plp
+  rts
+
+; =============================================
+; time_save_working_copy - Copy time_s1..time_y100 → [time_work_addr]
+; =============================================
+time_save_working_copy
+  .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  ; Set up longptr
+  rep #$20
+  .al
+  lda time_work_addr
+  sta longptr
+  sep #$20
+  .as
+  lda time_work_bank
+  sta longptr+2
+  ; Copy 12 bytes from time_s1 → [longptr]
+  ldy #0
+- lda time_s1, y
+  sta [longptr], y
+  iny
+  cpy #12
+  bne -
+  plp
+  rts
+
+; =============================================
+; gettime - Read SRTC hardware into global time vars
+; SRTC: write $0D to $2801 to initiate, read 13 fields from $2800
+; Requires: DBR=$00 (SRTC at $2800/$2801 in bank $00)
+; =============================================
+gettime
+  .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  lda #$0d
+  sta $2801              ; initiate SRTC read
+  lda $2800              ; dummy read (per SRTC protocol)
+  lda $2800
+  sta time_s1
+  lda $2800
+  sta time_s10
+  lda $2800
+  sta time_m1
+  lda $2800
+  sta time_m10
+  lda $2800
+  sta time_h1
+  lda $2800
+  sta time_h10
+  lda $2800
+  sta time_d1
+  lda $2800
+  sta time_d10
+  lda $2800
+  sta time_mon
+  lda $2800
+  sta time_y1
+  lda $2800
+  sta time_y10
+  lda $2800
+  sta time_y100
+  plp
+  rts
+
+; =============================================
+; rendertime - Format BCD time as ASCII string in stringbuf
+; Parameters pushed on stack before JSR:
+;   SP+3,SP+4 = p_time_addr (word)
+;   SP+5      = p_time_bank (byte)
+; Produces: "YYYY-MM-DD HH:MM:SS\0" (20 bytes in stringbuf)
+; =============================================
+rendertime
+  .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  ; Read parameter pointer from stack into longptr
+  ; Stack: [PHP pushed P] [ret addr 2B] [addr 2B] [bank 1B]
+  ; After our PHP: SP+2,3 = ret, SP+4,5 = addr, SP+6 = bank
+  rep #$20
+  .al
+  lda 4, s              ; p_time_addr
+  sta longptr
+  sep #$20
+  .as
+  lda 6, s              ; p_time_bank
+  sta longptr+2
+
+  ; X = offset into stringbuf, Y = offset into time struct
+  ldx #0
+  ldy #11               ; start with y100 (field 11)
+
+  ; --- Year (4 digits) ---
+  lda [longptr], y       ; y100
+  and #$0f
+  cmp #$0a
+  bpl _y_skip1
+  clc
+  adc #$30
+  sta stringbuf+1, x
+  lda #$31               ; '1' for 19xx
+  sta stringbuf, x
+  bra _y_skip2
+_y_skip1
+  clc
+  adc #$26               ; $30 - $0a = $26 → '0' for 20xx
+  sta stringbuf+1, x
+  lda #$32               ; '2' for 20xx
+  sta stringbuf, x
+_y_skip2
+  inx
+  inx
+  dey
+  lda [longptr], y       ; y10
+  and #$0f
+  clc
+  adc #$30
+  sta stringbuf, x
+  inx
+  dey
+  lda [longptr], y       ; y1
+  and #$0f
+  clc
+  adc #$30
+  sta stringbuf, x
+  inx
+  lda #$2d               ; '-'
+  sta stringbuf, x
+  inx
+
+  ; --- Month (2 digits) ---
+  dey
+  lda [longptr], y       ; mon
+  and #$0f
+  cmp #$0a
+  bpl _mon_skip1
+  clc
+  adc #$30
+  sta stringbuf+1, x
+  lda #$30               ; '0' tens digit
+  sta stringbuf, x
+  bra _mon_skip2
+_mon_skip1
+  clc
+  adc #$26               ; 10+ → "1" + (val-10)
+  sta stringbuf+1, x
+  lda #$31               ; '1' tens digit
+  sta stringbuf, x
+_mon_skip2
+  inx
+  inx
+  lda #$2d               ; '-'
+  sta stringbuf, x
+  inx
+
+  ; --- Day (2 digits) ---
+  dey
+  lda [longptr], y       ; d10
+  clc
+  adc #$30
+  sta stringbuf, x
+  inx
+  dey
+  lda [longptr], y       ; d1
+  clc
+  adc #$30
+  sta stringbuf, x
+  inx
+  lda #$20               ; ' '
+  sta stringbuf, x
+  inx
+
+  ; --- Hour (2 digits) ---
+  dey
+  lda [longptr], y       ; h10
+  clc
+  adc #$30
+  sta stringbuf, x
+  inx
+  dey
+  lda [longptr], y       ; h1
+  clc
+  adc #$30
+  sta stringbuf, x
+  inx
+  lda #$3a               ; ':'
+  sta stringbuf, x
+  inx
+
+  ; --- Minute (2 digits) ---
+  dey
+  lda [longptr], y       ; m10
+  clc
+  adc #$30
+  sta stringbuf, x
+  inx
+  dey
+  lda [longptr], y       ; m1
+  clc
+  adc #$30
+  sta stringbuf, x
+  inx
+  lda #$3a               ; ':'
+  sta stringbuf, x
+  inx
+
+  ; --- Second (2 digits) ---
+  dey
+  lda [longptr], y       ; s10
+  clc
+  adc #$30
+  sta stringbuf, x
+  inx
+  dey
+  lda [longptr], y       ; s1
+  clc
+  adc #$30
+  sta stringbuf, x
+  ; Null terminate
+  stz stringbuf+1, x
+
+  plp
+  rts
+
+; =============================================
+; settime - Write BCD time to MCU
+; Sends time_y100..time_s1 → MCU_PARAM[0..11], then CMD_SETRTC
+; =============================================
+settime
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  lda time_y100
+  sta MCU_PARAM
+  lda time_y10
+  sta MCU_PARAM+1
+  lda time_y1
+  sta MCU_PARAM+2
+  lda time_mon
+  sta MCU_PARAM+3
+  lda time_d10
+  sta MCU_PARAM+4
+  lda time_d1
+  sta MCU_PARAM+5
+  lda time_h10
+  sta MCU_PARAM+6
+  lda time_h1
+  sta MCU_PARAM+7
+  lda time_m10
+  sta MCU_PARAM+8
+  lda time_m1
+  sta MCU_PARAM+9
+  lda time_s10
+  sta MCU_PARAM+10
+  lda time_s1
+  sta MCU_PARAM+11
+  lda #CMD_SETRTC
+  sta MCU_CMD
+  lda #$00
+  sta ST_RTC_VALID
+  rts
+
+; =============================================
+; printtime - Display current time (called every frame)
+; Reads SRTC, formats to stringbuf, prints at status bar position.
+; =============================================
+printtime
+  .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  jsr gettime
+  jsr render_rtc_time
+  lda listdisp
+  clc
+  adc #$0a
+  sta print_y
+  lda #$2b
+  sta print_x
+  lda #$40
+  sta print_count
+  lda #stringbuf >> 16
+  sta print_bank
+  ldx #stringbuf & $ffff
+  stx print_src
+  stz print_pal
+  jsr hiprint
+  plp
+  rts
+
+; =============================================
+; render_rtc_time - Format global time vars via rendertime
+; Pushes time_s1 address as param, calls rendertime, cleans stack.
+; =============================================
+render_rtc_time
+  .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  lda #time_s1 >> 16          ; bank = 0
+  pha
+  pea time_s1 & $ffff         ; address = $02A0
+  jsr rendertime
+  pla
+  pla
+  pla
+  plp
+  rts
+
+; =============================================
+; rtc_init - Boot-time "Please set the time" dialog
+; Called via JSL from boot path. Returns via RTL.
+; =============================================
+rtc_init
+  .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  ; Set up window
+  lda #text_clkset >> 16
+  sta window_tbank
+  ldx #text_clkset & $ffff
+  stx window_taddr
+  lda time_win_x
+  sta window_x
+  inc a
+  inc a
+  inc a
+  pha                          ; p_time_x on stack
+  lda time_win_w
+  sta window_w
+  lda time_win_y
+  sta window_y
+  inc a
+  pha                          ; p_time_y on stack
+  lda time_win_h
+  sta window_h
+  jsr push_window
+  jsr draw_window
+  ; Push time_init parameters (addr, bank) and call
+  lda #time_s1 >> 16          ; bank = 0
+  pha
+  pea time_s1 & $ffff         ; address = $02A0
+  jsr time_init
+  ; Clean up all stack params (5 bytes: addr word + bank + y + x)
+  pla
+  pla
+  pla
+  pla
+  pla
+  bcc +
+  jsr settime                  ; carry set = user saved the time
++ jsr pop_window
+  plp
+  rtl

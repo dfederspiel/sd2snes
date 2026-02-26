@@ -237,6 +237,17 @@ last_win_x  .byte 2
 last_win_y  .byte 12
 last_win_w  .byte 60
 
+; Clock setting dialog
+text_clkset   .text "Please set the time"
+              .byte 0
+time_win_x    .byte 20
+time_win_y    .byte 17
+time_win_w    .byte 25
+time_win_h    .byte 3
+
+; Ellipsis characters (for submenu indicators)
+text_ellipse  .byte 127, 128, 0
+
 ; =============================================
 ; Ball sprite tile data (8x8, 4bpp = 32 bytes)
 ; Simple filled circle pattern

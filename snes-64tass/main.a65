@@ -33,31 +33,66 @@ GAME_MAIN
 
   ; --- Cold boot init sequence ---
   jsr killdma
+  jsr clear_wram
   jsr snes_init
   jsr clear_vram
   jsr clear_cgram
   jsr waitblank
   jsr setup_gfx
+  jsr store_wram_routines
   jsr colortest
   jsr video_init
   jsr setup_hdma
 
-  ; --- Screen on (emulator: always max brightness) ---
+  ; --- Hardware detection + screen on + MCU detection ---
+  jsr detect_ultra16
+  jsr detect_satellaview
   jsr screen_on
+  jsr wait_mcu_ready
 
-  ; --- Emulator mode: show POC display ---
-  ; (MCU detection deferred to Milestone 3)
+  ; --- Initialize ball sprite (shared by both paths) ---
+  sep #$20
+  .as
+  lda #100
+  sta ball_x
+  lda #100
+  sta ball_y
+  lda #2
+  sta ball_vx
+  lda #1
+  sta ball_vy
+  stz bounce_wall
+
+  ; Check if MCU responded
+  lda SNES_CMD
+  cmp #$55
+  bne emu_mode
+
+  ; --- Normal MCU path: file browser ---
+  jsr setup_224          ; set 224-line mode, listdisp = 18
+  jsr filesel_init
+  sep #$20
+  .as
+  lda ST_RTC_VALID
+  beq +
+  jsl rtc_init           ; "Please set the time" dialog
++
+  jsr fileselloop        ; main file browser loop (never returns normally)
+  sei
+  stz $4200
+  jml infloop            ; infinite loop in WRAM
+
+  ; --- Emulator mode: no MCU, show POC display ---
+emu_mode
+  .databank 0
   lda #$0f
-  sta cur_bright       ; WRAM mirror ($00:0031)
-  sta tgt_bright       ; WRAM mirror ($00:0030)
-  sta bright_limit     ; WRAM mirror ($00:0032)
+  sta cur_bright
+  sta tgt_bright
+  sta bright_limit
   sta $2100            ; force brightness now
 
   jsr poc_display
 
-  ; --- Disable per-frame tile DMA ---
-  ; poc_display's NMI wait may catch a stale isr_done from an NMI
-  ; that fired mid-hiprint (before all text was in WRAM buffers).
   ; Wait for one guaranteed fresh NMI so the complete text is in VRAM.
   stz isr_done
 - lda isr_done
@@ -70,31 +105,15 @@ GAME_MAIN
   sta screen_dma_disable
 
   ; --- Initialize animation state ---
-  ; Start showing palette 0 (warm red), idle (not transitioning)
-  stz anim_frame         ; 0 = idle
-  stz anim_speed         ; animate every frame (fast transitions)
+  stz anim_frame
+  stz anim_speed
   stz anim_timer
   stz anim_phase
-  ; src = palette 0, dst = palette 0 (idle: src == dst)
   stz anim_src_idx
   stz anim_src_idx+1
   stz anim_dst_idx
   stz anim_dst_idx+1
-  stz hdma_pal_flip      ; HDMA reads buffer A, animate writes buffer B
-
-  ; --- Initialize ball sprite ---
-  sep #$20             ; ensure 8-bit accumulator
-  .as
-  lda #100             ; starting X position
-  sta ball_x
-  lda #100             ; starting Y position
-  sta ball_y
-  lda #2               ; X velocity (+2 pixels/frame)
-  sta ball_vx
-  lda #1               ; Y velocity (+1 pixel/frame)
-  sta ball_vy
-  stz bounce_wall        ; no bounce yet
-  ; Ball color (white) is set in setup_gfx during forced blank.
+  stz hdma_pal_flip
 
   ; --- Switch data bank to $7E for WRAM variable access ---
   lda #$7e
@@ -102,7 +121,7 @@ GAME_MAIN
   plb
   .databank $7e
 
-  ; --- Main loop: wait for NMI each frame ---
+  ; --- Emulator main loop: wait for NMI each frame ---
 mainloop
 - lda isr_done
   lsr
@@ -341,15 +360,14 @@ _anim_rts
 
 ; =============================================
 ; update_ball - Move ball and bounce off edges
-; Updates OAM with new position
-; Runs in .databank $7e, sep #$20, rep #$10
+; NMI handler reads ball_x/ball_y to update OAM.
+; All vars are DP ($0070-$0074), safe from any DBR context.
 ; =============================================
 update_ball
-  .databank $7e
+  .databank 0
+  .dpage 0
   sep #$20
   .as
-  rep #$10
-  .xl
 
   stz bounce_wall        ; clear bounce flag each frame
 
@@ -635,6 +653,10 @@ setup_gfx
   stx $2181
   sta $2183
   DMA7 $00, hdma_math_src, $80, 19
+
+  ; Initialize window stack (empty sentinel)
+  ldx #$ffff
+  stx window_stack_head
 
   rts
 
@@ -1090,6 +1112,49 @@ waitblank
 
 
 ; =============================================
+; clear_wram - Fill all WRAM with $55 using DMA
+; Fills $7E:0000-$7E:1FEF (spares stack at $1FF0+),
+; $7E:2000-$7E:FFFF, and bank $7F.
+; Uses WRAM port ($2180-$2183) + DMA channel 7.
+; Requires: DBR=$00, DMA disabled
+; =============================================
+clear_wram
+  .databank 0
+  php
+  rep #$10
+  .xl
+  sep #$20
+  .as
+  ldx #$0000
+  stz $2183              ; WRAM bank = $7E (bit 0 = 0)
+  stx $2181              ; WRAM address = $0000
+  lda #$55
+  sta $2aff              ; fill value source byte
+  ldx #$8008
+  stx $4370              ; DMA mode: fixed source → $2180
+  ldx #$2aff
+  stx $4372              ; source address = $2AFF
+  stz $4374              ; source bank = $00
+  lda #$80
+  ; Fill $7E:0000-$7E:1FEF (spare stack at $1FF0+)
+  ldx #$1ff0
+  stx $4375
+  sta $420b
+  ; Fill $7E:2000-$7E:FFFF
+  ldx #$2000
+  stx $2181
+  ldx #$e000
+  stx $4375
+  sta $420b
+  ; Fill bank $7F
+  ldx #$0000
+  stx $4375              ; size 0 = 65536 bytes
+  sta $420b
+  plp
+  rts
+
+
+; =============================================
 ; clear_vram - Zero all 64KB of VRAM using DMA
 ; Requires: DBR = $00, force blank must be on
 ; =============================================
@@ -1127,12 +1192,373 @@ clear_cgram
 
 
 ; =============================================
+; store_wram_routines - Copy ROM routine images to WRAM
+; Uses MVN to bulk-copy 5 routines from ROM bank $C0.
+; Requires: DBR=$00
+; =============================================
+store_wram_routines
+  .databank 0
+  php
+  rep #$30
+  .al
+  .xl
+  phb
+  ; Copy wram_routine_src → WRAM_ROUTINE ($7EF000), $80 bytes
+  ; 64tass MVN convention: mvn source_bank, dest_bank (opposite of snescom!)
+  lda #$007f
+  ldx #wram_routine_src & $ffff
+  ldy #WRAM_ROUTINE & $ffff
+  mvn $c0, $7e
+  ; Copy store_blockram_routine_src → WRAM_STORE_BLOCKRAM_ROUTINE ($7EF080), $80 bytes
+  lda #$007f
+  ldx #store_blockram_routine_src & $ffff
+  ldy #WRAM_STORE_BLOCKRAM_ROUTINE & $ffff
+  mvn $c0, $7e
+  ; Copy fadeloop → WRAM_FADELOOP ($7EF100), $EF bytes
+  lda #$00ee
+  ldx #fadeloop & $ffff
+  ldy #WRAM_FADELOOP & $ffff
+  mvn $c0, $7e
+  ; Copy wram_wait_mcu_src → WRAM_WAIT_MCU ($7EF200), $0B bytes
+  lda #$000a
+  ldx #wram_wait_mcu_src & $ffff
+  ldy #WRAM_WAIT_MCU & $ffff
+  mvn $c0, $7e
+  ; Copy wram_load_ultra16_cfg_src → WRAM_LOAD_ULTRA16_CFG ($7EF210), $80 bytes
+  lda #$007f
+  ldx #wram_load_ultra16_cfg_src & $ffff
+  ldy #WRAM_LOAD_ULTRA16_CFG & $ffff
+  mvn $c0, $7e
+  plb
+  .databank 0          ; MVN changed DBR to $7E; plb restores $00
+  plp
+  rts
+
+
+; =============================================
+; wait_mcu_ready - Poll SNES_CMD for MCU ready ($55)
+; Times out after ~65536 iterations (for emulator detection).
+; Requires: DBR=$00
+; =============================================
+wait_mcu_ready
+  .databank 0
+  php
+  sep #$20
+  .as
+  lda #$00
+  sta MCU_CMD            ; clear any pending command
+  rep #$10
+  .xl
+  ldx #$0000             ; timeout counter
+- lda SNES_CMD
+  cmp #$55
+  beq +
+  dex
+  bne -                  ; try ~65536 times then give up
++ plp
+  rts
+
+
+; =============================================
+; detect_ultra16 - Check for Ultra16 hardware
+; Tests $0021C0 register for echo behavior. Writes result
+; to ST_IS_U16 ($FF1110) in SRAM so MCU knows reset timing.
+; Requires: DBR=$00
+; =============================================
+detect_ultra16
+  .databank 0
+  php
+  sep #$20
+  .as
+  lda #$aa
+  sta $0021c0
+  lda $0021c0
+  cmp #$55
+  beq detect_ultra16_found
+  lda #$00
+  sta ST_IS_U16              ; long addr (bank $FF, auto from .databank 0)
+  bra detect_ultra16_out
+detect_ultra16_found
+  lda $0021c2
+  sta ST_IS_U16
+  jsl WRAM_LOAD_ULTRA16_CFG
+  lda $0021c1
+  and #$fb
+  sta $0021c1
+detect_ultra16_out
+  lda #$55
+  sta $0021c0
+  plp
+  rts
+
+
+; =============================================
+; detect_satellaview - Check for Satellaview hardware
+; Tests $2188 register for echo behavior. Writes result
+; to ST_HAS_SATELLAVIEW ($FF1112) in SRAM.
+; Requires: DBR=$00
+; =============================================
+detect_satellaview
+  .databank 0
+  php
+  sep #$20
+  .as
+  lda #$aa
+  sta $2188
+  cmp $2188
+  bne detect_satellaview_out
+  lda #$55
+  sta $2188
+  cmp $2188
+  bne detect_satellaview_out
+detect_satellaview_found
+  stz $2188
+  stz $2189
+  stz $218e
+  stz $218f
+  lda #$01
+  sta ST_HAS_SATELLAVIEW     ; long addr (bank $FF)
+  plp
+  rts
+detect_satellaview_out
+  lda #$00
+  sta ST_HAS_SATELLAVIEW     ; long addr (bank $FF)
+  plp
+  rts
+
+
+; =============================================
+; game_handshake - Send load command to MCU, wait for ACK,
+; then jump to WRAM routine (FPGA reconfig → fade → game).
+; Input: A = command byte (e.g., CMD_LOADROM)
+; Requires: DBR=$00
+; =============================================
+game_handshake
+  .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  pha                    ; save command byte
+  lda #$01
+  jsr hide_cursor
+  jsr draw_loading_window
+  jsr waitblank
+  ; Send initial request to MCU
+  lda #$00
+  sta SNES_CMD
+  sta $4200              ; disable NMI
+  sei
+  pla
+  sta MCU_CMD            ; send the command
+  ; Wait for ACK/NACK
+- lda SNES_CMD
+  cmp #$55
+  beq +
+  cmp #$aa
+  beq game_handshake_error
+  bra -
++ lda #$55
+  sta MCU_CMD
+  ; Jump to WRAM routine (FPGA reconfig → fadeloop → game loads)
+  jsl WRAM_ROUTINE
+  plp
+  rts
+
+game_handshake_error
+  .databank 0
+  ; TODO: display meaningful error message
+  jsr pop_window
+  plp
+  rts
+
+
+; =============================================
+; WRAM routine source images
+; These are assembled in ROM (bank $C0) but execute from WRAM/BRAM
+; after being MVN-copied by store_wram_routines at boot.
+; =============================================
+
+; --- wram_routine_src ---
+; Copied to $7EF000. Called via JSL from game_handshake.
+; Sends FPGA reconfig command, waits for ACK, installs fadeloop
+; in block RAM, then jumps to it.
+; DBR=$00 at entry (from caller). All accesses use long addressing.
+wram_routine_src
+  .databank ?            ; runs from WRAM, DBR unknown at assembly time
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  ; Acknowledge ready for FPGA reconf
+  lda #CMD_FPGA_RECONF
+  sta MCU_CMD            ; auto-long from .databank ?
+  ; Wait for ACK (reconf done or not necessary)
+- lda SNES_CMD           ; auto-long
+  cmp #$77
+  bne -
+  ; Install fadeloop in block RAM after FPGA reconf
+  ; (ROM not available after reconfig — must copy from WRAM)
+  jsl WRAM_STORE_BLOCKRAM_ROUTINE
+  jsl BRAM_ROUTINE
+  plp
+  rtl
+
+; --- store_blockram_routine_src ---
+; Copied to $7EF080. Copies fadeloop from WRAM to block RAM (BRAM).
+; Called via JSL from wram_routine_src.
+; DBR=$00 at entry (carried from original caller).
+store_blockram_routine_src
+  .databank ?
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  ; Write BRA $FE (infinite loop opcode) to infloop WRAM var
+  lda #$80
+  sta infloop            ; auto-long from .databank ?
+  lda #$fe
+  sta infloop+1          ; auto-long
+  ; Copy fadeloop from WRAM ($7E) to block RAM ($00)
+  ; 64tass MVN: mvn source_bank, dest_bank
+  rep #$20
+  .al
+  lda #$00ee
+  ldx #WRAM_FADELOOP & $ffff
+  ldy #BRAM_ROUTINE & $ffff
+  phb
+  mvn $7e, $00
+  plb
+  plp
+  rtl
+
+; --- fadeloop ---
+; Copied to $7EF100, then copied again to BRAM ($002A10) at runtime.
+; Executes from BRAM bank $00. PHK/PLB sets DBR=$00.
+; Fades screen to black, fills WRAM, sends CMD_RESET, infinite loops.
+fadeloop
+  .databank ?            ; initially unknown
+  sep #$30
+  .as
+  .xs
+  phk
+  plb
+  .databank 0            ; now DBR=$00 (executing from BRAM bank $00)
+  stz $4200              ; disable NMI
+  sei
+  sta MCU_CMD            ; A has command byte from caller
+  ldx cur_bright         ; current screen brightness
+fadeloop_start
+  lda $4212
+  asl a
+  bcs fadeloop_start     ; wait for NOT in VBlank
+- lda $4212
+  asl a
+  bcc -                  ; wait for VBlank start
+  dex
+  dex
+  stx $2100              ; decrease brightness
+  bpl fadeloop_start     ; keep fading until brightness < 0
+  ; Screen is now dark — force blank
+  stz $2126
+  stz $212e
+  stz $2131
+  stz $2130
+  lda #$80
+  sta $2100              ; force blank on
+  stz MCU_CMD            ; clear command (use absolute, MCU_CMD=$2A00)
+  stz $420c              ; disable HDMA
+  ; DMA fill WRAM banks with $55
+  ldx #$00
+  rep #$10
+  .xl
+  stz $2183              ; WRAM bank = $7E (bit 0 = 0)
+  stx $2181              ; WRAM address = $0000
+  stx $4375              ; transfer size = 0 → 65536 bytes
+  lda #$55
+  sta $2aff              ; WRAM fill value source byte
+  ldx #$8008
+  stx $4370              ; DMA mode: fixed source, write to B-bus
+  ldx #$2aff
+  stx $4372              ; source address = $2AFF
+  stz $4374              ; source bank = $00
+  lda #$80
+  ; Fill bank $7E
+  sta $420b
+  ; Fill bank $7F
+  sta $420b
+  ; Reset PPU2 H/V odd/even read flag
+  lda $213f
+  ; Fix for uninitialized DMA transfers — clear all DMA registers
+  rep #$20
+  .al
+  lda #$ffff
+  ldy #$007c
+- dey
+  dey
+  sta $4300, y
+  bne -
+  ; Write infinite loop (BRA $FE) to high WRAM and jump there
+  lda #$fe80              ; $80 = BRA, $FE = -2 (branch to self)
+  sta $7fffe0             ; auto-long (bank $7F)
+  lda #CMD_RESET
+  sta MCU_CMD             ; send reset command to MCU
+  jml $7fffe0             ; jump to infinite loop
+- bra -                   ; unreachable fallback
+fadeloop_end
+
+; --- wram_wait_mcu_src ---
+; Copied to $7EF200. Called via JSL from filesel.
+; Infinite loop polling SNES_CMD for $55 (MCU ready).
+; Never times out — MCU always responds on real hardware.
+wram_wait_mcu_src
+  .databank ?
+  .as
+- lda SNES_CMD           ; auto-long from .databank ?
+  cmp #$55
+  bne -
+  rtl
+
+; --- wram_load_ultra16_cfg_src ---
+; Copied to $7EF210. Reads Ultra16 configuration register.
+wram_load_ultra16_cfg_src
+  .databank ?
+  .as
+  lda $0021c1            ; auto-long
+  and #$fe
+  sta $0021c1            ; auto-long
+  lda $c70000            ; auto-long (Ultra16 config in bank $C7)
+  pha
+  lda $0021c1            ; auto-long
+  ora #$01
+  sta $0021c1            ; auto-long
+  pla
+  sta ST_U16_CFG         ; auto-long
+  rtl
+
+
+; =============================================
+; NMI hook binary - installed to BRAM ($2A10) by MCU
+; during game loading (snescmd_prepare_nmihook).
+; MCU reads nmihook_ptr from $C0FF00 to find this data.
+; Extracted from original snescom-built ROM (240 bytes).
+; Must be byte-exact: FPGA patches branch offsets at
+; hardcoded positions within this block.
+; =============================================
+nmihook
+  .binary "nmihook.bin"
+
+
+; =============================================
 ; Include additional source files
 ; =============================================
 .include "ui.a65"
 .include "common.a65"
 .include "pad.a65"
 .include "filesel.a65"
+.include "time.a65"
 .include "dma.a65"
 .include "font.a65"
 .include "palette.a65"

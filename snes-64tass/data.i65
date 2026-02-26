@@ -204,3 +204,41 @@ hdma_math             = $028A  ; 6 bytes - color math initial
 hdma_math_upperborder = $0290  ; 3 bytes - selection bar upper border
 hdma_math_selection   = $0293  ; 3 bytes - selection bar highlight
 hdma_math_lowerborder = $0296  ; 10 bytes - selection bar lower border
+
+; =============================================
+; Time/RTC variables ($02A0-$02B0)
+; Between HDMA tables (end $029F) and hdma_pal_back ($0300).
+; =============================================
+time_s1      = $02A0  ; .byte - seconds ones digit (BCD)
+time_s10     = $02A1  ; .byte - seconds tens digit
+time_m1      = $02A2  ; .byte - minutes ones digit
+time_m10     = $02A3  ; .byte - minutes tens digit
+time_h1      = $02A4  ; .byte - hours ones digit
+time_h10     = $02A5  ; .byte - hours tens digit
+time_d1      = $02A6  ; .byte - day ones digit
+time_d10     = $02A7  ; .byte - day tens digit
+time_mon     = $02A8  ; .byte - month (1-12)
+time_y1      = $02A9  ; .byte - year ones digit
+time_y10     = $02AA  ; .byte - year tens digit
+time_y100    = $02AB  ; .byte - year hundreds digit
+time_sel     = $02AC  ; .byte - which field is selected (0-5)
+time_exit    = $02AD  ; .byte - nonzero = user pressed A (save)
+time_cancel  = $02AE  ; .byte - nonzero = user pressed B (cancel)
+time_ptr     = $02AF  ; .byte - BCD offset for current field
+time_tmp     = $02B0  ; .byte - scratch for leap year calc
+
+; =============================================
+; Time dialog work variables ($02B1-$02B5)
+; Parameters stored here by time_init (avoids AllocStack/TCD).
+; =============================================
+time_work_addr = $02B1  ; .word - pointer to time struct being edited
+time_work_bank = $02B3  ; .byte - bank of time struct
+time_work_x    = $02B4  ; .byte - dialog X position
+time_work_y    = $02B5  ; .byte - dialog Y position
+
+; =============================================
+; Misc WRAM variables ($02B6-$02B9)
+; =============================================
+infloop  = $02B6  ; 2 bytes - filled with $80 $FE (BRA self) at boot
+mm_tmp   = $02B8  ; .byte - main menu scratch
+mm_sel   = $02B9  ; .byte - main menu selection

@@ -27,6 +27,8 @@ Use this when translating code from `snes/` (snescom) to `snes-64tass/` (64tass)
 | `jmp @label` | `jml label` | Long jump (or auto if cross-bank) |
 | `inc` (accumulator) | `inc a` | 64tass requires explicit `a` operand |
 | `dec` (accumulator) | `dec a` | 64tass requires explicit `a` operand |
+| `mvn $7e, $c0` | `mvn $c0, $7e` | **Operand order reversed!** snescom=dst,src; 64tass=src,dst |
+| `mvp $7e, $c0` | `mvp $c0, $7e` | Same reversal applies to MVP |
 
 ## Include Model
 
@@ -223,8 +225,18 @@ my_function
   ; ... code using WRAM vars works now ...
 ```
 
+### MVN/MVP operand order is REVERSED vs snescom — CRITICAL
+snescom: `mvn destination, source` (WDC manual convention)
+64tass: `mvn source, destination` (reversed!)
+
+When porting `mvn $7e, $c0` from snescom (copy ROM $C0 → WRAM $7E), write `mvn $c0, $7e` in 64tass.
+
+**Verify with binary**: Correct encoding for ROM→WRAM is `54 7E C0` (WDC byte order: dst=$7E, src=$C0). If you see `54 C0 7E`, the banks are swapped and the copy goes the wrong way.
+
+**Failure mode**: Silently copies zeros from WRAM to read-only ROM. WRAM routines remain all zeros → JSL to WRAM executes BRK instructions → system crash. Only visible on real hardware since emulator mode never calls WRAM routines.
+
 ### MVN changes DBR — declare .databank after it
-After `mvn $7e, $7e`, DBR=$7E. Use `.databank $7e` (not `.databank ?`) so `dec window_h` etc. validate correctly. Stack-relative ops (`lda $07,s`) don't use DBR so they work regardless.
+After `mvn $c0, $7e` in 64tass, DBR=$7E (destination bank). Use `.databank $7e` (not `.databank ?`) so `dec window_h` etc. validate correctly. Stack-relative ops (`lda $07,s`) don't use DBR so they work regardless.
 
 ### ROM constant access from .databank 0
 With `.databank 0`, labels in bank $C0 (ROM) auto-select long (4-byte) addressing due to bank mismatch. WRAM vars at $00xx use absolute (2-byte) since they match bank $00. This is correct for HiROM.
@@ -334,10 +346,13 @@ Unlike snescom which may have implicit clearing, 64tass builds need explicit DMA
 | data.i65 | Expanded | Window, list selector, filesel WRAM vars |
 | const.a65 | Expanded | Window frame chars, space64, loading data |
 
-### Milestone 4 — File browser (IN PROGRESS)
-| File | Priority | Key challenges |
-|------|----------|----------------|
-| filesel.a65 | High | Directory rendering, navigation, MCU communication |
-| menu.a65 | Medium | Menu system, game_handshake, context menus |
-| time.a65 | Low | Clock display (stub for now) |
-| spcplay.a65 | Low | SPC player (stub for now) |
+### Milestone 4 — File browser + MCU (IN PROGRESS)
+| File | Status | Notes |
+|------|--------|-------|
+| filesel.a65 | Done | Full file browser: init, loop, dir rendering, nav, MCU comms |
+| time.a65 | Done | Clock: gettime, rendertime, printtime, settime, rtc_init, time_init |
+| main.a65 | Expanded | WRAM routines, store_wram_routines, wait_mcu_ready, game_handshake, MCU boot path |
+| data.i65 | Expanded | Time/RTC vars ($02A0-$02B0), work vars, infloop, mm_tmp/sel |
+| const.a65 | Expanded | Clock dialog strings/dims, text_ellipse |
+| menu_select | Done | Ported into filesel.a65 (Mode 7 multiply, selection loop) |
+| Stubs remaining | — | spcplayer, mainmenu, filesel_contextmenu_file, filesel_favorites_contextmenu |
