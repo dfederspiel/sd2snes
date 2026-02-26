@@ -111,3 +111,726 @@ hiprint_end
   .databank ?           ; restored to caller's values
   plp
   rts
+
+
+; =============================================
+; loprint - Print string to WRAM via $2180 port
+; Low-res text rendering: writes tile+attr pairs into BG2 tile buffer.
+; Uses [print_ptr],y for bank-independent string access.
+; Input: print_x, print_y, print_src, print_bank
+; =============================================
+loprint
+  .dpage 0
+  phb
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda #$00
+  pha
+  plb                    ; DBR = $00
+  .databank 0
+  rep #$20
+  .al
+  lda print_x
+  and #$00ff
+  asl                    ; double for word-sized tilemap entries
+  clc
+  adc #BG2_TILE_BUF & $ffff
+  sta print_temp
+  lda print_y
+  and #$00ff
+  xba                    ; * 256
+  lsr                    ; * 128
+  lsr                    ; * 64 bytes per tilemap row
+  clc
+  adc print_temp
+  sta $2181              ; WRAM address low + mid
+  sep #$20
+  .as
+  stz $2183              ; WRAM bank $7E (bit 0 = 0)
+  ; Set up indirect long pointer to string
+  ldx print_src
+  stx print_ptr
+  lda print_bank
+  sta print_ptr+2
+  ldy #$0000
+loprint_loop_inner
+  lda [print_ptr],y
+  beq loprint_end
+  sta $2180              ; write tile number
+  lda #$00
+  adc #$00
+  ora #$20               ; priority bit
+  sta $2180              ; write tile attribute
+  iny
+  bra loprint_loop_inner
+loprint_end
+  plb
+  .databank ?
+  rts
+
+
+; =============================================
+; hide_cursor - Move selection bar off-screen
+; =============================================
+hide_cursor
+  .databank 0          ; caller must have DBR in WRAM mirror range
+  php
+  sep #$20
+  .as
+  stz bar_wl
+  dec bar_wl
+  stz bar_xl
+  dec bar_xl
+  stz bar_yl
+  dec bar_yl
+  plp
+  rts
+
+
+; =============================================
+; right_align - Calculate print X for right-aligned text
+; Input:  DB = bank of string, Y = address of string
+; Output: print_x set for right-aligned text in current window
+; =============================================
+right_align
+  .databank 0          ; assembly hint — actual DBR set by caller for strlen
+  php
+    jsr strlen
+    sep #$20
+    .as
+    rep #$10
+    .xl
+    tya                    ; A = strlen (low byte)
+    sec
+    sbc window_x
+    eor #$ff
+    clc
+    adc window_w
+    dec a
+    sta print_x
+  plp
+  rts
+
+
+; =============================================
+; set_bar_color - Change selection bar color
+; Input: A = bar "palette" number (0 or 1)
+; =============================================
+set_bar_color
+  php
+    sep #$30
+    .as
+    .xs
+    asl a
+    asl a
+    tax
+    lda hdma_bar_color_src,x
+    sta hdma_math+2
+    lda hdma_bar_color_src+1,x
+    sta hdma_math+5
+    lda hdma_bar_color_src+2,x
+    sta hdma_math+8
+    lda hdma_bar_color_src+3,x
+    sta hdma_math+11
+  plp
+  rts
+
+
+; =============================================
+; draw_window - Render window frame with optional title
+; Input: window_x, window_y, window_w, window_h
+;        window_tbank, window_taddr (title string, or empty)
+; Uses DBR=$00 for WRAM variable access; ROM constants use
+; auto-selected long addressing (bank $C0 != $00).
+; =============================================
+draw_window
+  phb
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda #$00
+  pha
+  plb
+  .databank 0
+; draw upper border
+; upper left corner
+  lda window_nw
+  sta stringbuf
+  lda window_w
+  sta window_tmp
+  stz window_tmp+1
+  ldy window_tmp
+  dey
+; upper right corner
+  lda window_ne
+  sta stringbuf,y
+  dey
+; upper edge
+-
+  lda window_nh
+  sta stringbuf,y
+  dey
+  bne -
+; print to text buffer
+  lda #$03
+  sta print_pal
+  lda window_x
+  sta print_x
+  lda window_y
+  sta print_y
+  lda #stringbuf >> 16
+  sta print_bank
+  ldx #stringbuf & $ffff
+  stx print_src
+  lda window_w
+  sta print_count
+  jsr hiprint
+
+; print window title if string not empty
+  lda window_tbank
+  ldx window_taddr
+  phb
+  pha
+  plb
+  .databank ?
+  lda $0000, x
+  xba
+  plb
+  .databank 0
+  xba
+  beq draw_window_notitle
+  lda print_x
+  pha
+  inc print_x
+  inc print_x
+  lda #window_tl >> 16
+  sta print_bank
+  ldx #window_tl & $ffff
+  stx print_src
+  lda #$01
+  sta print_count
+  jsr hiprint
+  inc print_x
+  lda window_tbank
+  sta print_bank
+  ldx window_taddr
+  stx print_src
+  lda window_w
+  sta print_count
+  jsr hiprint
+  lda print_done
+  clc
+  adc print_x
+  sta print_x
+  lda #window_tr >> 16
+  sta print_bank
+  ldx #window_tr & $ffff
+  stx print_src
+  lda #$01
+  sta print_count
+  jsr hiprint
+  lda window_w
+  sta print_count
+  pla
+  sta print_x
+; draw left+right borders + space inside window
+draw_window_notitle
+  lda #stringbuf >> 16
+  sta print_bank
+  ldx #stringbuf & $ffff
+  stx print_src
+  lda window_w
+  sta window_tmp
+  stz window_tmp+1
+  ldy window_tmp
+  dey
+  lda window_ev
+  sta stringbuf,y
+  dey
+-
+  lda space64
+  sta stringbuf,y
+  dey
+  bne -
+  lda window_wv
+  sta stringbuf
+
+; print to text buffer multiple times
+  lda window_h
+  sta window_tmp
+  stz window_tmp+1
+  ldy window_tmp
+  dey
+  dey
+-
+  inc print_y
+  phy
+  jsr hiprint
+  ply
+  dey
+  bne -
+
+; draw lower window border
+; lower left corner
+  lda window_w
+  sta window_tmp
+  stz window_tmp+1
+  ldy window_tmp
+  dey
+; lower right corner
+  lda window_se
+  sta stringbuf,y
+  dey
+; lower edge
+-
+  lda window_sh
+  sta stringbuf,y
+  dey
+  bne -
+; lower left corner
+  lda window_sw
+  sta stringbuf
+; print to text buffer
+  inc print_y
+  jsr hiprint
+  plp
+  plb
+  .databank ?
+  rts
+
+
+; =============================================
+; draw_loading_window - Show "Loading..." popup
+; =============================================
+draw_loading_window
+  .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda loading_win_x
+  sta window_x
+  sta print_x
+  lda listdisp
+  clc
+  adc #$0a
+  sta window_y
+  sta print_y
+  lda loading_win_w
+  sta window_w
+  lda loading_win_h
+  sta window_h
+  jsr push_window
+  lda #text_loading >> 16
+  sta print_bank
+  ldx #text_loading & $ffff
+  stx print_src
+  stz print_pal
+  lda window_w
+  sta print_count
+  jsr hiprint
+  plp
+  rts
+
+
+; =============================================
+; Window stack format:
+;   prevptr   1 word    (+0)
+;   xpos      1 word    (+2)
+;   ypos      1 word    (+4)
+;   width     1 word    (+6)
+;   height    1 word    (+8)
+;   cursor    1 word    (+10)
+;   step      1 word    (+12)
+;   maxcursor 1 word    (+14)
+;   payload   width*height*2 bytes (+16)
+; =============================================
+
+; =============================================
+; push_window - Save tile buffer region to window stack
+; Uses MVN to copy BG1+BG2 tile data for later restoration.
+; Uses hardware multiply ($211B/$211C/$2134) for size calc.
+; Input: window_x, window_y, window_w, window_h
+; =============================================
+push_window
+  phb
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda #$00
+  pha
+  plb
+  .databank 0
+  rep #$20
+  .al
+; write pointer to current head
+  lda window_stack_head
+  cmp #$ffff
+  bne pushw_skip_current_head
+; empty stack - initialize
+  ldx #$0000
+  stx window_stack_head
+  lda #$ffff
+  bra pushw_write_element
+pushw_skip_current_head
+; calculate address of next stack element
+  tax
+  phx                    ; save "previous" head
+  lda WINDOW_STACK_BASE+6, x
+  and #$00fe
+  clc
+  adc #$0002
+  sep #$20
+  .as
+  sta $211b
+  stz $211b
+  lda WINDOW_STACK_BASE+8, x
+  sta $211c
+  rep #$20
+  .al
+  lda $2134
+  asl a
+  clc
+  adc #$0010
+  adc window_stack_head
+  sta window_stack_head
+  tax
+  pla                    ; restore "previous" head
+pushw_write_element
+  sta WINDOW_STACK_BASE, x
+; write current window position and dimensions
+  lda window_x
+  and #$00ff
+  sta WINDOW_STACK_BASE+2, x
+  lda window_y
+  and #$00ff
+  sta WINDOW_STACK_BASE+4, x
+  lda window_w
+  and #$00ff
+  sta WINDOW_STACK_BASE+6, x
+  ora #$0001
+  pha                    ; save rounded window_w = count-1 for MVN
+  lda window_h
+  and #$00ff
+  pha                    ; save window_h
+  sta WINDOW_STACK_BASE+8, x
+  lda listsel_sel
+  and #$00ff
+  sta WINDOW_STACK_BASE+10, x
+  lda listsel_step
+  and #$00ff
+  sta WINDOW_STACK_BASE+12, x
+  lda listsel_max
+  and #$00ff
+  sta WINDOW_STACK_BASE+14, x
+  lda WINDOW_STACK_BASE+4, x
+  rep #$20
+  .al
+  xba                    ; calculate start offset (64*window_y + window_x)
+  lsr a
+  lsr a
+  clc
+  adc WINDOW_STACK_BASE+2, x
+  and #$fffe             ; align to word boundary
+  tax                    ; source offset
+  lda window_stack_head
+  clc
+  adc #$0010
+  adc #WINDOW_STACK_BASE & $ffff
+  tay                    ; destination address
+  phx                    ; source offset
+  lda $01,s              ; source offset
+  clc
+  adc #BG1_TILE_BUF & $ffff
+  tax
+  phx                    ; source address
+  .databank $7e          ; MVN sets DBR=$7E; stack-relative ops before MVN are bank-independent
+- lda $07,s              ; count (stack-relative)
+  mvn WINDOW_STACK_BASE >> 16, BG1_TILE_BUF >> 16
+  lda $01,s              ; source address (stack-relative)
+  clc
+  adc #$0040
+  sta $01,s              ; new source address (stack-relative)
+  tax
+  sep #$20
+  .as
+  dec window_h           ; DBR=$7E → $7E:0078 ✓
+  rep #$20
+  .al
+  bne -
+  sep #$20
+  .as
+  lda $05,s              ; restore window_h (stack-relative)
+  sta window_h           ; DBR=$7E ✓
+  rep #$20
+  .al
+  lda $03,s              ; source offset (stack-relative)
+  clc
+  adc #BG2_TILE_BUF & $ffff
+  sta $01,s              ; source address (stack-relative)
+  tax
+- lda $07,s              ; count (stack-relative)
+  mvn WINDOW_STACK_BASE >> 16, BG2_TILE_BUF >> 16
+  lda $01,s              ; source address (stack-relative)
+  clc
+  adc #$0040
+  sta $01,s              ; new source address (stack-relative)
+  tax
+  sep #$20
+  .as
+  dec window_h           ; DBR=$7E ✓
+  rep #$20
+  .al
+  bne -
+  pla                    ; source address
+  pla                    ; source offset
+  pla                    ; window_h
+  sep #$20
+  .as
+  sta window_h           ; DBR=$7E ✓
+  pla                    ; count
+  pla                    ; count
+  plp
+  plb
+  .databank ?
+  rts
+
+
+; =============================================
+; pop_window - Restore tile buffer region from window stack
+; Reverses push_window: copies saved data back to BG1+BG2.
+; =============================================
+pop_window
+  phb
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  lda #$00
+  pha
+  plb
+  .databank 0
+  rep #$20
+  .al
+; check stack
+  lda window_stack_head
+  tax
+  cmp #$ffff
+  bne popw_rewind_head
+; empty stack - do nothing
+  plp
+  plb
+  rts
+popw_rewind_head
+; restore data from current window
+  lda #$0000
+  sep #$20
+  .as
+  lda WINDOW_STACK_BASE+6, x
+  ora #$01
+  pha                    ; save rounded count for MVN
+  lda WINDOW_STACK_BASE+8, x
+  pha
+  lda WINDOW_STACK_BASE+10, x
+  sta listsel_sel
+  lda WINDOW_STACK_BASE+12, x
+  sta listsel_step
+  lda WINDOW_STACK_BASE+14, x
+  sta listsel_max
+
+  lda WINDOW_STACK_BASE+4, x
+  rep #$20
+  .al
+  xba                    ; calculate dest offset (64*window_y + window_x)
+  lsr a
+  lsr a
+  clc
+  adc WINDOW_STACK_BASE+2, x
+  and #$fffe             ; align to word boundary
+  tay                    ; dest offset
+  lda window_stack_head
+  clc
+  adc #$0010
+  adc #WINDOW_STACK_BASE & $ffff
+  tax                    ; source address
+  phy                    ; dest offset
+  tya
+  clc
+  adc #BG1_TILE_BUF & $ffff
+  tay
+  phy                    ; dest address
+  .databank $7e          ; MVN sets DBR=$7E; stack-relative ops are bank-independent
+- lda $06,s              ; count (stack-relative)
+  and #$00ff
+  mvn BG1_TILE_BUF >> 16, WINDOW_STACK_BASE >> 16
+  lda $01,s              ; dest address (stack-relative)
+  clc
+  adc #$0040
+  sta $01,s              ; new dest address (stack-relative)
+  tay
+  sep #$20
+  .as
+  dec window_h           ; DBR=$7E → $7E:0078 ✓
+  rep #$20
+  .al
+  bne -
+  sep #$20
+  .as
+  lda $05,s              ; restore window_h (stack-relative)
+  sta window_h           ; DBR=$7E ✓
+  rep #$20
+  .al
+  lda $03,s              ; dest offset (stack-relative)
+  clc
+  adc #BG2_TILE_BUF & $ffff
+  sta $01,s              ; dest address (stack-relative)
+  tay
+- lda $06,s              ; count (stack-relative)
+  and #$00ff
+  mvn BG2_TILE_BUF >> 16, WINDOW_STACK_BASE >> 16
+  lda $01,s              ; dest address (stack-relative)
+  clc
+  adc #$0040
+  sta $01,s              ; new dest address (stack-relative)
+  tay
+  sep #$20
+  .as
+  dec window_h           ; DBR=$7E ✓
+  rep #$20
+  .al
+  bne -
+  pla                    ; dest address
+  pla                    ; dest offset
+; restore address of previous stack element
+  ldx window_stack_head  ; DBR=$7E → $7E:007E ✓
+  txy
+  lda WINDOW_STACK_BASE+0, x
+  tax
+  sta window_stack_head
+  sep #$20
+  .as
+  pla                    ; window_h
+  sta window_h
+  pla                    ; count
+; peek into previous head (if any) to restore dimensions
+  cpx #$ffff
+  bne +
+  tyx
++ lda WINDOW_STACK_BASE+2, x
+  sta window_x
+  lda WINDOW_STACK_BASE+4, x
+  sta window_y
+  lda WINDOW_STACK_BASE+6, x
+  sta window_w
+  lda WINDOW_STACK_BASE+8, x
+  sta window_h
+  plp
+  plb
+  .databank ?
+  rts
+
+
+; =============================================
+; window_greyout - Dim window tiles by changing palette
+; Overwrites tile palette bits in BG1+BG2 tile buffers.
+; Uses WRAM scratch vars instead of stack locals to avoid
+; DP/absolute addressing conflicts with 64tass.
+;   window_tmp  = row counter (vcount)
+;   print_temp  = start offset per row
+; Input: window_x, window_y, window_w, window_h
+; =============================================
+window_greyout
+  phb
+  php
+    sep #$20
+    .as
+    rep #$10
+    .xl
+    lda #$7e
+    pha
+    plb
+    .databank $7e
+    rep #$20
+    .al
+    lda window_h
+    and #$00ff
+    sta window_tmp
+    lda window_y
+    and #$00ff
+    xba
+    lsr a
+    lsr a
+    pha
+      lda window_x
+      and #$00ff
+      clc
+      adc $01,s
+      and #$fffe
+      sta print_temp
+      tax
+    pla
+greyout_start
+    lda window_w
+    and #$00ff
+    tay
+    lda window_x
+    lsr a
+    bcs greyout_bg1
+greyout_bg2
+    lda BG2_TILE_BUF, x
+    and #$03ff
+    ora #$3800
+    sta BG2_TILE_BUF, x
+    dey
+    beq greyout_next
+greyout_bg1
+    lda BG1_TILE_BUF, x
+    and #$03ff
+    ora #$3800
+    sta BG1_TILE_BUF, x
+    inx
+    inx
+    dey
+    bne greyout_bg2
+greyout_next
+    dec window_tmp
+    beq greyout_out
+    lda print_temp
+    clc
+    adc #$0040
+    sta print_temp
+    tax
+    bra greyout_start
+greyout_out
+  plp
+  plb
+  .databank ?
+  rts
+
+
+; =============================================
+; disable_screen_update - Stop NMI tile DMA
+; Caller must have DBR in WRAM mirror range.
+; =============================================
+disable_screen_update
+  .databank 0
+  inc screen_dma_disable
+  rts
+
+; =============================================
+; enable_screen_update - Resume NMI tile DMA
+; Caller must have DBR in WRAM mirror range.
+; =============================================
+enable_screen_update
+  .databank 0
+  stz screen_dma_disable
+  rts

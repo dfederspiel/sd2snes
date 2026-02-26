@@ -1,0 +1,66 @@
+; stack.i65 - Stack frame allocation macros (64tass)
+;
+; Ported from snescom's stack.i65 which used cpp #define tricks.
+; 64tass uses .macro/.endm — no preprocessor needed.
+;
+; Usage: define _locals as a constant before calling AllocStack.
+;   _locals = $04        ; 4 bytes of local storage
+;   AllocStack
+;   ; ... use DP-relative offsets $00-$03 for locals ...
+;   FreeStack
+;
+; AllocStack pushes P and D, then moves the stack pointer down by
+; _locals bytes and sets the direct page register to point at the
+; new frame. Local variables are accessed via DP addressing ($00, $01, etc).
+;
+; DESTROYS ACCUMULATOR.
+
+AllocStack .macro
+  php
+  rep #$20
+  .al
+  phd
+  tsc
+  sec
+  sbc #_locals
+  tcs
+  inc a
+  tcd
+.endm
+
+; FreeStack undoes AllocStack: restores SP, D, and P.
+; DESTROYS ACCUMULATOR.
+
+FreeStack .macro
+  tsc
+  rep #$20
+  .al
+  clc
+  adc #_locals
+  tcs
+  pld
+  plp
+.endm
+
+; StackParam(offset) calculates the stack offset to reach parameters
+; passed by the caller, accounting for the AllocStack frame.
+; Frame layout (growing downward):
+;   [caller's params]
+;   [return address - 2 bytes for JSR]
+;   [saved P - 1 byte from PHP]
+;   [saved D - 2 bytes from PHD]
+;   [local variables - _locals bytes]  <- DP points here
+;
+; So parameter at offset N from the caller's push is at:
+;   DP + _locals + N + 2 (D) + 2 (return addr) + 1 (P) = _locals + N + 5
+;
+; For JSL (3-byte return address):
+;   DP + _locals + N + 2 (D) + 3 (return addr) + 1 (P) = _locals + N + 6
+
+StackParam .function offset
+  = _locals + offset + $05
+.endf
+
+StackParamFar .function offset
+  = _locals + offset + $06
+.endf

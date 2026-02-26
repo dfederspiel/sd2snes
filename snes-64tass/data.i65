@@ -112,6 +112,57 @@ NUM_PALETTES       = 4
 PALETTE_SIZE       = 30   ; 10 R + 10 G + 10 B per palette
 
 ; =============================================
+; Window system ($0075-$00C1)
+; =============================================
+window_x          = $0075  ; .byte - window X position (tile column)
+window_y          = $0076  ; .byte - window Y position (tile row)
+window_w          = $0077  ; .byte - window width (tiles)
+window_h          = $0078  ; .byte - window height (tiles)
+window_tmp        = $0079  ; .word - work variable
+window_tbank      = $007B  ; .byte - window title string bank
+window_taddr      = $007C  ; .word - window title string address
+window_stack_head = $007E  ; .word - window stack head pointer
+stringbuf         = $0080  ; 66 bytes - string buffer for window rendering
+
+; =============================================
+; List/menu selector ($00C2-$00C9)
+; =============================================
+listsel_sel        = $00C2  ; .byte - current selection index
+listsel_step       = $00C3  ; .byte - step size
+listsel_max        = $00C4  ; .byte - maximum selection value
+listsel_pickbutton = $00C5  ; .byte - button used to pick
+listsel_dirty      = $00C6  ; .byte - needs redraw
+listsel_backup     = $00C7  ; .byte - backup of selection
+listdisp           = $00C8  ; .word - number of displayable list entries
+
+; =============================================
+; File selector state ($00CA-$00F2)
+; =============================================
+dirptr_addr       = $00CA  ; .word - current dir entry address
+dirptr_bank       = $00CC  ; .word - current dir entry bank
+dirstart_addr     = $00CE  ; .word - start of visible dir window address
+dirstart_bank     = $00D0  ; .word - start of visible dir window bank
+dirend_addr       = $00D2  ; .word - end of dir listing address
+dirend_bank       = $00D4  ; .word - end of dir listing bank
+dirend_idx        = $00D6  ; .word - end of dir listing index
+dirptr_idx        = $00D8  ; .word - current dir entry index
+dirent_addr       = $00DA  ; .word - address of current dirent
+dirent_bank       = $00DC  ; .word - bank of current dirent
+dirent_type       = $00DE  ; .byte - type of current dirent
+dirend_onscreen   = $00DF  ; .byte - is end of dir visible?
+dirlog_idx        = $00E0  ; 3 bytes - logical index long pointer
+direntry_fits_idx = $00E3  ; .word - entry fits index
+longptr           = $00E5  ; 3 bytes - general purpose long pointer
+filesel_state     = $00E8  ; .byte - menu state (0=file select)
+filesel_dirty     = $00E9  ; .byte - needs redraw
+filesel_sel       = $00EA  ; .word - selected item number
+cursor_x          = $00EC  ; .byte - current cursor position (x)
+cursor_y          = $00ED  ; .byte - current cursor position (y)
+fd_addr           = $00EE  ; .word - file descriptor address
+fd_bank           = $00F0  ; .byte - file descriptor bank
+fd_fnoff          = $00F1  ; .word - filename offset in file descriptor
+
+; =============================================
 ; HDMA tables ($0100-$02FF, double-buffer at $0300)
 ; Copied from ROM source tables at boot via DMA to WRAM port.
 ; HDMA reads from these WRAM copies (bank $00 mirror = bank $7E).

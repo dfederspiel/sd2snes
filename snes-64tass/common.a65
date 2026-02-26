@@ -1,0 +1,78 @@
+; common.a65 - Utility functions (64tass port)
+; waitblank is already in main.a65; only strlen and bin2dec16 here.
+
+; =============================================
+; strlen - Count characters until 0 or 1
+; Characters 0 and 1 are considered "end of string".
+; Arguments: DB=data bank, Y=offset (16-bit index!)
+; Return: Y=strlen
+; =============================================
+strlen
+  .databank 0          ; assembly hint only — actual DBR set by caller
+  php
+  rep #$10
+  .xl
+  sep #$20
+  .as
+  phx
+  ldx #$0000
+- lda $0000, y
+  lsr a
+  beq +
+  iny
+  inx
+  bra -
++ txy
+  plx
+  plp
+  rts
+
+; =============================================
+; bin2dec16 - Convert 16-bit value to 5-digit ASCII decimal
+; Arguments: A=value (16 bits)
+; Return: 6 bytes of ASCII (5 digits + NUL) in stringbuf
+; Uses hardware divide registers $4204-$4206/$4214-$4216
+; =============================================
+bin2dec16
+  phd
+  phb
+  pea $0000
+  pld
+  .dpage 0
+  php
+  rep #$20
+  .al
+  sep #$10
+  .xs
+  pha
+    ldx #$00
+    phx
+    plb                    ; DBR = $00
+    .databank 0
+    lda #$2020
+    sta stringbuf
+    sta stringbuf+2
+    lda #$0020
+    sta stringbuf+4
+    ldx #$04
+  pla
+- sta $4204
+  lda #$000a
+  sta $4206                ; start divide; burn 16 cycles
+  pha
+  pla                      ; 9 cycles (pha=4 + pla=5)
+  xba                      ; 3 cycles
+  lda $004216              ; 4 cycles — load remainder
+  ora #$30
+  tay
+  sty stringbuf, x
+  dex
+  lda $4214                ; load quotient
+  beq +
+  bra -
++ plp
+  plb
+  .databank ?
+  pld
+  .dpage ?
+  rts

@@ -7,6 +7,7 @@
 ; --- Include constants and macros ---
 .include "memmap.i65"
 .include "dma.i65"
+.include "stack.i65"
 .include "data.i65"
 
 ; =============================================
@@ -1129,6 +1130,7 @@ clear_cgram
 ; Include additional source files
 ; =============================================
 .include "ui.a65"
+.include "common.a65"
 .include "pad.a65"
 .include "dma.a65"
 .include "font.a65"

@@ -188,6 +188,43 @@ emu_str5  .text "Edit main.a65 for this text"
           .byte 0
 
 ; =============================================
+; Window frame characters and UI data
+; =============================================
+space64
+  .byte $20, $20, $20, $20, $20, $20, $20, $20
+  .byte $20, $20, $20, $20, $20, $20, $20, $20
+  .byte $20, $20, $20, $20, $20, $20, $20, $20
+  .byte $20, $20, $20, $20, $20, $20, $20, $20
+  .byte $20, $20, $20, $20, $20, $20, $20, $20
+  .byte $20, $20, $20, $20, $20, $20, $20, $20
+  .byte $20, $20, $20, $20, $20, $20, $20, $20
+  .byte $20, $20, $20, $20, $20, $20, $20, $20
+  .byte $00
+
+text_dirmark  .text " <dir>"
+              .byte 0
+window_nw     .byte 20
+window_ne     .byte 21
+window_sw     .byte 22
+window_se     .byte 23
+window_nh     .byte 24
+window_sh     .byte 25
+window_wv     .byte 26
+window_ev     .byte 27
+window_tl     .byte 28
+window_tr     .byte 29
+
+text_loading  .text "Loading"
+              .byte 127, 128
+              .text "                        "
+              .byte 0
+
+loading_win_x .byte 2
+loading_win_y .byte 28
+loading_win_w .byte 34
+loading_win_h .byte 1
+
+; =============================================
 ; Ball sprite tile data (8x8, 4bpp = 32 bytes)
 ; Simple filled circle pattern
 ; =============================================
