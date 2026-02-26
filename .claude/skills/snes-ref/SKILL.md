@@ -180,11 +180,14 @@ Fires every VBlank (~60Hz). DMAs BG1/BG2 tile buffers WRAM->VRAM, updates cursor
 |---------|------|---------|
 | `$002A00` | MCU_CMD | Command register (SNES->MCU) |
 | `$002A02` | SNES_CMD | Status register (MCU->SNES) |
+| `$002A04` | MCU_PARAM | Parameter block (8 bytes, bidirectional) |
+| `$002A10` | BRAM_ROUTINE | NMI hook code (installed by MCU at game launch) |
 | `$7EA000` | BG2_TILE_BUF | BG2 tile buffer (NMI DMAs to VRAM) |
 | `$7EB000` | BG1_TILE_BUF | BG1 tile buffer (NMI DMAs to VRAM) |
 | `$7EF000` | WRAM_ROUTINE | FPGA reconfig routine |
 | `$7EF200` | WRAM_WAIT_MCU | MCU wait routine |
 | `$FF019D` | CFG_BRIGHTNESS_LIMIT | Screen brightness config |
+| `$FF1110` | ST_SNES_ADDR | SNES status flags (Ultra16, Satellaview) |
 
 ## Detailed References
 
@@ -196,3 +199,4 @@ Fires every VBlank (~60Hz). DMAs BG1/BG2 tile buffers WRAM->VRAM, updates cursor
 - [Hardware Math](reference/hardware-math.md) — Hardware multiply ($4202/$4203), divide ($4204-$4206), result registers ($4214-$4217), cycle wait times, signed multiply via Mode 7 regs, codebase examples
 - [65816 Addressing Modes](reference/addressing-modes.md) — All addressing modes with snescom syntax
 - [Mixed-Mode Transfers](reference/mixed-mode-transfers.md) — Hidden B register trap: TAX/TAY in mixed M=1/X=0 mode, safe patterns, audit checklist
+- [MCU Communication](reference/mcu-communication.md) — SNES ROM ↔ MCU/FPGA protocol: BRAM command channel, NMI hook system, game launch handshake, SRAM data regions, ROM-as-API concept

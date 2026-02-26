@@ -123,13 +123,16 @@ emu_mode
 
   ; --- Emulator main loop: wait for NMI each frame ---
 mainloop
+  .databank $7e
 - lda isr_done
   lsr
   bcc -
   stz isr_done
   jsr read_pad
+  .databank $7e          ; read_pad preserves DBR
   jsr update_ball
   jsr animate_gradient
+  .databank $7e          ; animate_gradient preserves DBR via phb/plb
   bra mainloop
 
 
@@ -137,10 +140,12 @@ mainloop
 ; animate_gradient - Bounce-triggered gradient transitions
 ; Only starts a new transition when bounce_wall != 0 and idle.
 ; Interpolates between src and dst palettes over 128 frames.
-; Runs in .databank $7e, sep #$20, rep #$10
+; Called from both mainloop (DBR=$7E) and fileselloop (DBR=$00).
+; All pre-push vars are DP; internally switches to DBR=$00 for
+; hardware multiply and ROM access. Preserves caller's DBR.
 ; =============================================
 animate_gradient
-  .databank $7e
+  .databank 0
   sep #$20
   .as
   rep #$10
@@ -351,10 +356,11 @@ _anim_store_frame
   sta anim_frame
 
 _anim_restore_dbr
-  ; --- Restore DBR=$7E ---
+  ; --- Restore caller's DBR ---
   plb
-  .databank $7e
+  .databank ?
 _anim_rts
+  .databank ?
   rts
 
 

@@ -78,6 +78,8 @@ fileselloop
   stz isr_done
   jsr printtime
   jsr update_ball
+  jsr animate_gradient
+  .databank 0            ; animate_gradient preserves DBR via phb/plb
   jsr filesel_updates
   lda filesel_dirty
   cmp #$01
