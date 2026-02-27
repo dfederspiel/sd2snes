@@ -722,8 +722,6 @@ _menu_print_ent_loop
   adc #$05
   sta wram(print_x)
   lda P_MAX_OPT_LEN, s
-  inc a                    ; +1: Mode 5 BG2/BG1 alternate; odd count leaves
-  and #$fe                 ; one BG layer uncleared. Round up to even.
   sta wram(print_count)
   lda #<(space64 >> 16)
   sta wram(print_bank)
@@ -1515,7 +1513,7 @@ _mvd_kv8_set
       lda $0000, y
       .dpage 0
       sta [menu_val_ptr]
-      bra _mvd_kv8_cont
+      brl _mvd_kv8_cont
 _mvd_kv8_cancel
     plb
   plp
@@ -1541,8 +1539,6 @@ _mvd_kv8_print
       dec a
       sta wram(print_x)
       lda mev_value_len
-      inc a                   ; Round up to even: Mode 5 BG2/BG1 alternate,
-      and #$fe                ; odd count leaves one BG layer uncleared.
       sta wram(print_count)
       phy
         jsr hiprint

@@ -110,13 +110,13 @@ hdma_cg_addr_src
 ; HDMA mode switch source (channel 3)
 ; Switches between Mode 3 (top) and Mode 5 (text area)
 ; =============================================
-hdma_mode_src   .byte 8, $03, $01, $05, $00
+hdma_mode_src   .byte 56, $03, $01, $05, $00
 
 ; =============================================
 ; HDMA BG1 horizontal scroll source (channel 4)
 ; =============================================
 hdma_bg1scroll_src
-  .byte 8
+  .byte 56
   .byte $00, $00, $ff, $03
   .byte 127
   .byte $fc, $00, $0d, $00
@@ -130,7 +130,7 @@ hdma_bg1scroll_src
 ; HDMA BG2 vertical scroll source (channel 0)
 ; =============================================
 hdma_bg2scroll_src
-  .byte 8
+  .byte 56
   .byte $ff, $03
   .byte 127
   .byte $0d, $00

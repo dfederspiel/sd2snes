@@ -91,6 +91,13 @@ emu_mode
   sta bright_limit
   sta $2100            ; force brightness now
 
+  ; Patch HDMA tables for emulator mode: no logo bitmap, so switch to
+  ; Mode 5 early (scanline 8 instead of 56) for text rendering in top rows.
+  lda #8
+  sta hdma_mode        ; mode switch table first scanline count
+  sta hdma_bg1scroll   ; BG1 scroll table first scanline count
+  sta hdma_bg2scroll   ; BG2 scroll table first scanline count
+
   jsr poc_display
 
   ; Wait for one guaranteed fresh NMI so the complete text is in VRAM.
