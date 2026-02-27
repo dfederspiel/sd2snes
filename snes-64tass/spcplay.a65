@@ -1,0 +1,653 @@
+; spcplay.a65 - SPC file player (64tass port)
+;
+; SPC700 transfer and IO routines by Shay Green <gblargg@gmail.com>
+; minor corrections by Maximilian Rehkopf <otakon@gmx.net>
+
+; =============================================
+; spcplayer - Main SPC file player entry point
+; Called from select_spc in filesel.a65 after MCU loads SPC data.
+; Validates header, shows UI, transfers data to SPC700, loops until B pressed.
+; Exit triggers warm boot (backup WRAM, set signature, CMD_RESET).
+; =============================================
+spcplayer
+  .databank 0
+  .dpage 0
+  php
+  sep #$30
+  .as
+  .xs
+
+  ldx #$0a                  ; check if SPC header is present
+-
+  lda SPC_HEADER, x
+  cmp text_spcid, x
+  beq +
+  jmp spc_exit
++
+  dex
+  bne -
+
+  rep #$10
+  .xl                       ; now draw lots of stuff
+
+  lda #$02
+  sta window_x
+  lda #$09
+  sta window_y
+  lda #60
+  sta window_w
+  lda #18
+  sta window_h
+  jsr push_window
+  jsr window_greyout
+
+  stz bar_wl
+  dec bar_wl
+  stz bar_xl
+  dec bar_xl
+  stz bar_yl
+  dec bar_yl
+
+  lda #text_spcplay >> 16   ; loading window
+  sta window_tbank
+  ldx #text_spcplay & $ffff
+  stx window_taddr
+  lda spcplay_win_x
+  sta window_x
+  lda spcplay_win_y
+  sta window_y
+  lda spcplay_win_w
+  sta window_w
+  lda spcplay_win_h
+  sta window_h
+  jsr draw_window
+
+  lda #text_spcload >> 16   ; loading text
+  ldx #text_spcload & $ffff
+  sta print_bank
+  stx print_src
+  stz print_pal
+  lda #29
+  sta print_count
+  lda #16
+  sta print_y
+  lda #17
+  sta print_x
+  jsr hiprint
+
+  stz isr_done
+-
+  lda isr_done              ; wait until text is being printed...
+  beq -
+
+  jsr spc700_load           ; load SPC into SPC700
+
+  lda #text_spcplay >> 16
+  sta window_tbank
+  ldx #text_spcplay & $ffff
+  stx window_taddr
+  lda spcstart_win_x
+  sta window_x
+  lda spcstart_win_y
+  sta window_y
+  lda spcstart_win_w
+  sta window_w
+  lda spcstart_win_h
+  sta window_h
+  jsr draw_window
+
+  lda #text_spcstarta >> 16
+  ldx #text_spcstarta & $ffff
+  sta print_bank
+  stx print_src
+  lda #$01
+  sta print_pal
+  lda #30
+  sta print_count
+  lda #15
+  sta print_y
+  lda #17
+  sta print_x
+  jsr hiprint
+
+  lda #text_spcstartb >> 16
+  ldx #text_spcstartb & $ffff
+  sta print_bank
+  stx print_src
+  lda #$01
+  sta print_pal
+  lda #07
+  sta print_count
+  lda #17
+  sta print_y
+  lda #12
+  sta print_x
+  jsr hiprint
+
+  lda #$fe                  ; filename from SPC header at $FE004E
+  ldx #$004e
+  sta print_bank
+  stx print_src
+  stz print_pal
+  lda #32
+  sta print_count
+  lda #17
+  sta print_y
+  lda #20
+  sta print_x
+  jsr hiprint
+
+  lda #text_spcstartc >> 16
+  ldx #text_spcstartc & $ffff
+  sta print_bank
+  stx print_src
+  lda #$01
+  sta print_pal
+  lda #07
+  sta print_count
+  lda #18
+  sta print_y
+  lda #12
+  sta print_x
+  jsr hiprint
+
+  lda #$fe                  ; song name from SPC header at $FE002E
+  ldx #$002e
+  sta print_bank
+  stx print_src
+  stz print_pal
+  lda #32
+  sta print_count
+  lda #18
+  sta print_y
+  lda #20
+  sta print_x
+  jsr hiprint
+
+  lda #text_spcstartd >> 16
+  ldx #text_spcstartd & $ffff
+  sta print_bank
+  stx print_src
+  lda #$01
+  sta print_pal
+  lda #07
+  sta print_count
+  lda #19
+  sta print_y
+  lda #12
+  sta print_x
+  jsr hiprint
+
+  lda #$fe                  ; artist name from SPC header at $FE00B0
+  ldx #$00b0
+  sta longptr+2
+  sta print_bank
+  stx longptr
+  ldy #$00
+  lda [longptr], y
+  cmp #$41                  ; validate printable ASCII
+  bpl +
+  inx
++ stx print_src
+  stz print_pal
+  lda #32
+  sta print_count
+  lda #19
+  sta print_y
+  lda #20
+  sta print_x
+  jsr hiprint
+
+spc_playloop
+  lda isr_done              ; SPC player loop
+  lsr
+  bcc spc_playloop
+  jsr printtime
+  stz isr_done
+
+  jsr read_pad
+  lda pad_b
+  bne spc_key_b
+  bra spc_playloop
+
+spc_key_b
+  rep #$20
+  .al
+  tsc
+  sta SAVED_SP              ; save SP for warm boot re-entry
+  lda #$fa50                ; write reset signature
+  sta WARM_SIGNATURE
+  eor #$ffff
+  sta WARM_COMPLEMENT
+  sep #$20
+  .as
+
+  ; Blank screen & issue CMD_RESET to Microcontroller
+  ; This is required because there is no other way to stop S-SMP & S-DSP
+  sei
+  stz $2100
+  jsr pop_window
+  jsr backup_wram           ; save menu state
+  lda #CMD_RESET
+  sta MCU_CMD
+-
+  ; SNES waits for external reset from Microcontroller
+  bra -
+
+spc_exit                    ; return from player in case of wrong SPC file data
+  plp
+  rts
+
+; =============================================
+; spc700_load - Transfer SPC file data to SPC700
+; Disables NMI for timing-critical transfers,
+; re-enables when done.
+; =============================================
+spc700_load
+  .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+
+  sei                       ; disable NMI & IRQ
+  stz $4200                 ; the SPC player code is really timing sensitive ;)
+  jsr upload_dsp_regs       ; upload S-DSP registers
+  jsr upload_high_ram       ; upload 63.5K of SPC700 ram
+  jsr upload_low_ram        ; upload rest of ram
+  jsr restore_final         ; restore SPC700 state & start execution
+  lda #$81                  ; VBlank NMI + Auto Joypad Read
+  sta $4200                 ; enable V-BLANK NMI
+  cli
+  plp
+  rts
+
+; =============================================
+; upload_dsp_regs - Upload DSP registers and setup code
+; =============================================
+upload_dsp_regs
+  .databank 0
+  .dpage 0
+
+  ; Begin upload
+  ldy #$0002
+  jsr spc_begin_upload
+
+  ; Upload loader
+  ldx #$0000
+-
+  lda spc_loader, x
+  jsr spc_upload_byte
+  inx
+  cpy #31                   ; size of loader
+  bne -
+
+  ; Upload SP, PC & PSW
+  lda SPC_HEADER+43
+  jsr spc_upload_byte
+  lda SPC_HEADER+38
+  jsr spc_upload_byte
+  lda SPC_HEADER+37
+  jsr spc_upload_byte
+  lda SPC_HEADER+42
+  jsr spc_upload_byte
+
+  ; Upload DSP registers
+  ldx #$0000
+-
+  ; Initialize FLG and KON ($6c/$4c) to avoid artifacts (ikari_01)
+  cpx #$4c
+  bne +
+  lda #$00
+  bra _upload_skip_load
++
+  cpx #$6c
+  bne +
+  lda #$e0
+  bra _upload_skip_load
++
+  lda SPC_DSP_REGS, x
+_upload_skip_load
+  jsr spc_upload_byte
+  inx
+  cpx #128
+  bne -
+
+  ; Upload fixed values for $F1-$F3
+  ldy #$00f1
+  jsr spc_next_upload
+
+  lda #$80                  ; stop timers
+  jsr spc_upload_byte
+  lda #$6c                  ; get dspaddr set for later
+  jsr spc_upload_byte
+  lda #$60
+  jsr spc_upload_byte
+
+  ; Upload $f8-$1ff
+  ldy #$00f8
+  jsr spc_next_upload
+
+  ldx #$00f8
+-
+  lda SPC_DATA, x
+  jsr spc_upload_byte
+  inx
+  cpx #$200
+  bne -
+
+  ; Execute loader
+  ldy #$0002
+  jsr spc_execute
+  rts
+
+; =============================================
+; upload_high_ram - Burst-transfer 63.5K of SPC700 RAM
+; Uses custom SPC700 transfer routine for speed.
+; =============================================
+upload_high_ram
+  .databank 0
+  .dpage 0
+
+  ldy #$0002
+  jsr spc_begin_upload
+
+  ; Upload transfer routine
+  ldx #$0000
+-
+  lda spc_transfer, x
+  jsr spc_upload_byte
+  inx
+  cpy #44                   ; size of transfer routine
+  bne -
+
+  ldx #$023f                ; prepare transfer address
+
+  ; Execute transfer routine
+  ldy #$0002
+  sty APUIO2
+  stz APUIO1
+  lda APUIO0
+  inc a
+  inc a
+  sta APUIO0
+  ; Wait for acknowledgement
+-
+  cmp APUIO0
+  bne -
+
+  ; Burst transfer of 63.5K using custom routine
+_outer_transfer_loop
+  ldy #$003f                ; 3
+_inner_transfer_loop
+  lda SPC_DATA, x           ; 5 |
+  sta APUIO0                ; 4 |
+  lda SPC_DATA+$40, x       ; 5 |
+  sta APUIO1                ; 4 |
+  lda SPC_DATA+$80, x       ; 5 |
+  sta APUIO2                ; 4 |
+  lda SPC_DATA+$c0, x       ; 5 |
+  sta APUIO3                ; 4 |
+  tya                       ; 2 >> 38 cycles
+-
+  cmp APUIO3                ; 4 |
+  bne -                     ; 3 |
+  dex                       ; 2 |
+  dey                       ; 2 |
+  bpl _inner_transfer_loop  ; 3 >> 14 cycles
+
+  rep #$21                  ; 3 |
+  .al
+  txa                       ; 2 |
+  adc #$140                 ; 3 |
+  tax                       ; 2 |
+  sep #$20                  ; 3 |
+  .as
+  cpx #$003f                ; 3 |
+  bne _outer_transfer_loop  ; 3 >> 19 cycles
+
+  rts
+
+; =============================================
+; upload_low_ram - Upload SPC700 low RAM $0002-$00EF
+; =============================================
+upload_low_ram
+  .databank 0
+  .dpage 0
+
+  ; Upload $0002-$00EF using IPL
+  ldy #$0002
+  jsr spc_begin_upload
+
+  ldx #$0002
+-
+  lda SPC_DATA, x
+  jsr spc_upload_byte
+  inx
+  cpx #$00f0
+  bne -
+  rts
+
+; =============================================
+; restore_final - Restore SPC700 processor state and start execution
+; Uses instruction injection via exec_instr to set A, X, Y, SP, PSW,
+; DSP registers, and I/O ports, then starts the SPC700 program.
+; =============================================
+restore_final
+  .databank 0
+  .dpage 0
+  jsr start_exec_io         ; prepare execution from I/O registers
+
+  stz $420d                 ; SPC700 I/O code requires SLOW timing
+
+  ; Restore first two bytes of RAM
+  lda SPC_DATA
+  xba
+  lda #$e8                  ; MOV A,#<value>
+  tax
+  jsr exec_instr
+  ldx #$00c4                ; MOV $00,A
+  jsr exec_instr
+
+  lda SPC_DATA+1
+  xba
+  lda #$e8                  ; MOV A,#<value>
+  tax
+  jsr exec_instr
+  ldx #$01c4                ; MOV $01,A
+  jsr exec_instr
+
+  ; Restore SP
+  lda SPC_HEADER+43
+  sec
+  sbc #3
+  xba
+  lda #$cd                  ; MOV X,#<value>
+  tax
+  jsr exec_instr
+  ldx #$00bd                ; MOV SP,X
+  jsr exec_instr
+
+  ; Restore X
+  lda SPC_HEADER+40
+  xba
+  lda #$cd                  ; MOV X,#<value>
+  tax
+  jsr exec_instr
+
+  ; Restore Y
+  lda SPC_HEADER+41
+  xba
+  lda #$8d                  ; MOV Y,#<value>
+  tax
+  jsr exec_instr
+
+  ; Restore DSP FLG register
+  lda SPC_DSP_REGS+$6c
+  xba
+  lda #$e8                  ; MOV A,#<value>
+  tax
+  jsr exec_instr
+  ldx #$f3c4                ; MOV $f3,A -> $f2 has been set-up before by SPC700 loader
+  jsr exec_instr
+
+  ; Wait a bit (the newer S-APU takes its time to ramp up the volume)
+  ; (ikari_01)
+  lda #$10
+- pha
+  jsr waitblank
+  pla
+  dec a
+  bne -
+
+  ; Restore DSP KON register
+  lda #$4c
+  xba
+  lda #$e8                  ; MOV A,#$4c
+  tax
+  jsr exec_instr
+  ldx #$f2c4                ; MOV $f2,A
+  jsr exec_instr
+  lda SPC_DSP_REGS+$4c
+  xba
+  lda #$e8                  ; MOV A,#<value>
+  tax
+  jsr exec_instr
+  ldx #$f3c4                ; MOV $f3,A
+  jsr exec_instr
+
+  ; Restore DSP register address
+  lda SPC_DATA+$f2
+  xba
+  lda #$e8                  ; MOV A,#<value>
+  tax
+  jsr exec_instr
+  ldx #$f2c4                ; MOV dest,A
+  jsr exec_instr
+
+  ; Restore CONTROL register
+  lda SPC_DATA+$f1
+  and #$cf                  ; don't clear input ports
+  xba
+  lda #$e8                  ; MOV A,#<value>
+  tax
+  jsr exec_instr
+  ldx #$f1c4                ; MOV $F1,A
+  jsr exec_instr
+
+  ; Restore A
+  lda SPC_HEADER+39
+  xba
+  lda #$e8                  ; MOV A,#<value>
+  tax
+  jsr exec_instr
+
+  ; Restore PSW and PC
+  ldx #$7f00                ; NOP; RTI
+  stx APUIO0
+  lda #$fc                  ; patch loop to execute instruction just written
+  sta APUIO3
+
+  ; Restore IO ports $f4 - $f7
+  rep #$20
+  .al
+  lda SPC_DATA+$f4
+  tax
+  lda SPC_DATA+$f6
+  sta APUIO2
+  stx APUIO0                ; last to avoid overwriting RETI before run
+  sep #$20
+  .as
+
+  lda #$01
+  sta $420d                 ; restore FAST CPU operation
+  rts
+
+; =============================================
+; start_exec_io - Prepare SPC700 for instruction injection
+; Sets up a BRA loop at $F5-$F6 that we can patch per-instruction.
+; =============================================
+start_exec_io
+  .databank 0
+  .dpage 0
+  ; Set execution address
+  ldx #$00f5
+  stx APUIO2
+
+  stz APUIO1                ; NOP
+  ldx #$fe2f                ; BRA *-2
+
+  ; Signal to SPC that we're ready
+  lda APUIO0
+  inc a
+  inc a
+  sta APUIO0
+
+  ; Wait for acknowledgement
+-
+  cmp APUIO0
+  bne -
+
+  ; Quickly write branch
+  stx APUIO2
+
+  rts
+
+; =============================================
+; exec_instr - Execute a single SPC700 instruction
+; Input: X = instruction bytes (low=opcode, high=operand)
+; Uses precise cycle timing with PHD/PLD as delays.
+; =============================================
+exec_instr
+  .databank 0
+  ; Replace instruction
+  stx APUIO0
+  lda #$fc
+  sta APUIO3                ; 30
+
+  ; SPC BRA loop takes 4 cycles, so it reads
+  ; the branch offset every 4 SPC cycles (84 master).
+  ; We must handle the case where it read just before
+  ; the write above, and when it reads just after it.
+  ; If it reads just after, we have at least 7 SPC
+  ; cycles (147 master) to change restore the branch
+  ; offset.
+
+  ; 48 minimum, 90 maximum
+  ora #0
+  ora #0
+  ora #0
+  nop
+  nop
+  nop
+
+  ; 66 delay, about the middle of the above limits
+  phd                       ; 4
+  pld                       ; 5
+
+  ; Give plenty of extra time if single execution
+  ; isn't needed, as this avoids such tight timing
+  ; requirements.
+
+  phd                       ; 4
+  pld                       ; 5
+  phd                       ; 4
+  pld                       ; 5
+
+  ; Patch loop to skip first two bytes
+  lda #$fe                  ; 16
+  sta APUIO3                ; 30
+
+  ; 38 minimum (assuming 66 delay above)
+  phd                       ; 4
+  pld                       ; 5
+  ; Give plenty of extra time if single execution
+  ; isn't needed, as this avoids such tight timing
+  ; requirements.
+  phd
+  pld
+  phd
+  pld
+  rts

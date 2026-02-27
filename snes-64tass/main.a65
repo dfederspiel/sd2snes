@@ -1,6 +1,6 @@
-; main.a65 - sd2snes menu ROM entry point (64tass Milestone 2)
-; Pink gradient background + hiprint text rendering, no logo bitmap.
-; Always enters emulator mode (MCU detection deferred to Milestone 3).
+; main.a65 - sd2snes menu ROM entry point (64tass port)
+; Supports warm boot (WRAM restore from SRAM) and cold boot paths.
+; Emulator mode detected via MCU timeout; file browser on real hardware.
 
 .cpu "65816"
 
@@ -31,9 +31,78 @@ GAME_MAIN
   lda #$01
   sta $420d            ; enable FastROM
 
-  ; --- Cold boot init sequence ---
+  ; --- Check for warm boot (CMD_RESET issued before reset?) ---
+  rep #$20
+  .al
+  lda #$0000
+  sta MCU_CMD          ; clear MCU command register
+  sta MCU_PARAM        ; clear MCU parameters
+  sta MCU_PARAM+2
+  lda WARM_SIGNATURE
+  cmp #$fa50
+  bne coldboot
+  eor WARM_COMPLEMENT  ; validate: signature ^ complement must = $ffff
+  inc a
+  bne coldboot
+
+  ; --- Warm boot: restore file browser state ---
+  sta WARM_SIGNATURE   ; clear signature (A=0, prevents re-entry)
+  sta WARM_COMPLEMENT
+  lda SAVED_SP         ; restore stack pointer from before CMD_RESET
+  tcs
+
+  ; Light init: skip clear_wram, screen_on
+  ; setup_gfx clears $0000-$00FF and $8000-$FFFF, then we restore
+  ; the backed-up state on top to recover file browser variables.
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  jsr killdma
+  jsr apu_ram_init
+  jsr waitblank
+  jsr snes_init
+  jsr setup_gfx
+
+  ; DMA restore: WRAM_BAK ($FF:2000) → WRAM ($7E:0000), 8KB
+  ; Must come AFTER setup_gfx which clears $0000-$00FF.
+  stz $2183            ; WRAM bank = $7E
+  ldx #$0000
+  stx $2181            ; WRAM address = $0000
+  stz $4370            ; DMA mode: A→B, single register
+  ldx #WRAM_BAK & $ffff
+  stx $4372            ; source address
+  lda #WRAM_BAK >> 16
+  sta $4374            ; source bank
+  ldx #$2000
+  stx $4375            ; transfer size = 8KB
+  lda #$80
+  sta $4371            ; B-bus register = $2180 (WMDATA)
+  sta $420b            ; trigger DMA channel 7
+
+  jsr store_wram_routines
+  jsr colortest
+  jsr video_init
+  jsr setup_hdma
+  jsr setup_224          ; restore 224-line mode, trigger file list redraw
+  jsr detect_ultra16
+  jsr detect_satellaview
+  lda CFG_BRIGHTNESS_LIMIT
+  bne +
+  lda #$0f             ; fallback to max brightness
++ sta cur_bright
+  sta tgt_bright
+  sta $2100            ; set brightness immediately
+  plp                  ; restore processor state from caller
+  rts                  ; return to code that issued CMD_RESET
+
+  ; --- Cold boot: full initialization ---
+coldboot
+  sep #$20
+  .as
   jsr killdma
   jsr clear_wram
+  jsr apu_ram_init
   jsr snes_init
   jsr clear_vram
   jsr clear_cgram
@@ -171,9 +240,8 @@ setup_gfx
   stz $420c            ; disable HDMA
 
   ; --- Clear WRAM variable area ($7E:0000-$7E:00FF) ---
-  ; Only clear the variable/state area. Stack lives at $1FFF downward,
-  ; so we must NOT DMA-clear all of low WRAM while inside a JSR.
-  ; HDMA tables ($0100+) are overwritten by ROM→WRAM copies below.
+  ; clear_wram fills with $55 (sentinel), so we zero DP variables here.
+  ; Warm boot restores backed-up values on top of this after setup_gfx returns.
   ldx #$0000
   stx $2181
   lda #$00
@@ -978,6 +1046,23 @@ detect_satellaview_out
   plp
   rts
 
+; =============================================
+; backup_wram - Save 8KB of WRAM to SRAM for warm boot restore
+; Copies $7E:0000-$7E:1FFF → $FF:2000 (WRAM_BAK)
+; =============================================
+backup_wram
+  php
+  rep #$10
+  .xl
+  sep #$20
+  .as
+  .databank 0
+  ldx #$0000
+  stx $2181              ; WRAM source address = $0000
+  stz $2183              ; WRAM bank = $7E
+  DMA7 $80, WRAM_BAK, $80, $2000
+  plp
+  rts
 
 ; =============================================
 ; game_handshake - Send load command to MCU, wait for ACK,
@@ -1212,6 +1297,8 @@ nmihook
 .include "pad.a65"
 .include "filesel.a65"
 .include "time.a65"
+.include "spc700.a65"
+.include "spcplay.a65"
 .include "menu.a65"
 .include "menudata.a65"
 .include "sysinfo.a65"

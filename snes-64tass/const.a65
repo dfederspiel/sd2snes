@@ -257,6 +257,36 @@ sysinfo_win_w  .byte 43
 sysinfo_win_h  .byte 17
 
 ; =============================================
+; SPC Music Player strings and window coords
+; =============================================
+text_spcplay    .text "SPC Music Player"
+                .byte 0
+spcplay_win_x   .byte 15
+spcplay_win_y   .byte 15
+spcplay_win_w   .byte 33
+spcplay_win_h   .byte 3
+
+text_spcload    .text "Loading SPC data to SPC700"
+                .byte 127, 128, 0
+text_spcstarta  .text "**** Now playing SPC tune ****"
+                .byte 0
+text_spcstartb  .text "Name:  "
+                .byte 0
+text_spcstartc  .text "Song:  "
+                .byte 0
+text_spcstartd  .text "Artist:"
+                .byte 0
+text_spc_statusbar .text "B:Back"
+                .byte 0
+
+spcstart_win_x  .byte 10
+spcstart_win_y  .byte 13
+spcstart_win_w  .byte 44
+spcstart_win_h  .byte 9
+
+text_spcid      .text "SNES-SPC700"
+
+; =============================================
 ; Menu and config text strings
 ; =============================================
 text_mainmenu                       .text "Main Menu"
