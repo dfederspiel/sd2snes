@@ -21,6 +21,9 @@ utils/rle
 utils/derle
 *.bit
 *.bi3
+# Exception: fpga_mini.bi3 is a build prerequisite extracted from stock firmware
+# (required to build MCU firmware - not a build output)
+!verilog/sd2snes_mini/fpga_mini.bi3
 *.i
 *.s
 *.txt

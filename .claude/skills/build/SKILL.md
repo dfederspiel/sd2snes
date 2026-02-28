@@ -1,18 +1,19 @@
 ---
 name: build
-description: Build the SNES menu ROM. Supports both snescom (snes/) and 64tass (snes-64tass/) targets.
+description: Build the SNES menu ROM or MCU firmware. Supports snescom, 64tass, and MCU firmware targets.
 disable-model-invocation: true
-argument-hint: "[64tass] [clean]"
+argument-hint: "[64tass] [firmware] [clean]"
 ---
 
-# Build the SNES Menu ROM
+# Build sd2snes Components
 
-Build the sd2snes SNES menu ROM. Supports two assembler targets.
+Build the sd2snes SNES menu ROM or MCU firmware.
 
 ## Target Selection
 
 - **No argument** or **"clean"**: Build with snescom (default, `snes/` directory)
 - **"64tass"** or **"64tass clean"**: Build with 64tass (`snes-64tass/` directory)
+- **"firmware"** or **"firmware clean"**: Build MCU firmware (`src/` directory, config-mk3)
 
 ## snescom Build (default)
 
@@ -60,3 +61,35 @@ Build the sd2snes SNES menu ROM. Supports two assembler targets.
 4. Report results:
    - Success: confirm build succeeded, show file size for `menu.bin` (should be exactly 65536 bytes).
    - Failure: show error(s) with context about likely `.databank` or syntax issues.
+
+## MCU Firmware Build
+
+Builds the ARM Cortex-M3 MCU firmware for the FXPAK Pro (Mk.III).
+
+### Prerequisites
+- `arm-none-eabi-gcc` installed in WSL (`sudo apt install gcc-arm-none-eabi`)
+- `src/utils/genhdr` built (`cd src/utils && make`)
+- `utils/bin2c` built (`cd utils && gcc -o bin2c bin2c.c`)
+- `verilog/sd2snes_mini/fpga_mini.bi3` present (54,754 bytes, extracted from stock firmware and checked into git)
+
+### Build Steps
+
+1. If "clean" is in the arguments:
+   ```
+   wsl -e bash -c "cd /mnt/c/Users/david/code/sd2snes/src && make CONFIG=config-mk3 clean"
+   ```
+
+2. Run the build:
+   ```
+   wsl -e bash -c "cd /mnt/c/Users/david/code/sd2snes/src && make CONFIG=config-mk3 2>&1"
+   ```
+
+3. Analyze the build output:
+   - **`#define CONFIG_MK3_STM32 n`** in errors: CRLF line endings in config-mk3. Fix: `sed -i 's/\r$//' config-mk3`
+   - **`region 'flash' overflowed`**: fpga_mini.bi3 is too large (wrong file used as stand-in)
+   - **`utils/genhdr: not found`**: Build genhdr first (`cd src/utils && make`)
+   - **`bin2c: not found`**: Build bin2c first (`cd utils && gcc -o bin2c bin2c.c`)
+
+4. Report results:
+   - Success: confirm `obj-mk3/firmware.im3` was produced, show file size (~141KB expected).
+   - Failure: show error(s) and suggest fix.

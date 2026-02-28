@@ -8,6 +8,7 @@ sd2snes is a SNES flash cartridge with three tiers:
 - **FPGA** (`verilog/`) - Hardware logic for cartridge bus interface
 
 This branch focuses on the SNES Menu ROM - the "game" that provides the file browser UI.
+The MCU firmware (`src/`) is also buildable — see "MCU Firmware Build" section below.
 
 ## Build System
 
@@ -58,6 +59,28 @@ wsl -e bash -c "cd /mnt/c/Users/david/code/sd2snes/.claude/worktrees/vigorous-va
 1. Edit `.a65` files in VS Code
 2. Build: run the WSL make command above
 3. Load `menu.bin` in bsnes-accuracy (File > Load Cartridge, or restart)
+
+## MCU Firmware Build
+
+The ARM MCU firmware can be built from source for the FXPAK Pro (Mk.III).
+
+### Toolchain
+- **Compiler**: `arm-none-eabi-gcc` 13.2.1 (install: `sudo apt install gcc-arm-none-eabi` in WSL)
+- **Host utilities**: `src/utils/genhdr` and `utils/bin2c` (build from source: `cd src/utils && make` and `cd utils && gcc -o bin2c bin2c.c`)
+- **FPGA mini bitstream**: `verilog/sd2snes_mini/fpga_mini.bi3` (54,754 bytes, extracted from stock v1.11.0, checked into git)
+
+### Build Command
+```bash
+wsl -e bash -c "cd /mnt/c/Users/david/code/sd2snes/src && make CONFIG=config-mk3"
+```
+
+### Build Output
+- `src/obj-mk3/firmware.im3` — MCU firmware for FXPAK Pro (~141KB)
+- Deploy: copy to SD card at `/sd2snes/firmware.im3` (bootloader flashes on next boot)
+- Recovery: restore stock backup — bootloader is separate and always survives
+
+### Critical: CRLF Line Endings
+If `config-mk3` has Windows line endings, `autoconf.h` generation breaks silently (see MEMORY.md for details). Fix: `sed -i 's/\r$//' src/config-mk3`
 
 ## Architecture: SNES Menu ROM
 
