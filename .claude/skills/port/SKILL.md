@@ -406,6 +406,55 @@ lda $0007, x
 ### PHA/PLA symmetry depends on A width
 `pha`/`pla` push/pop 1 byte in `.as` and 2 bytes in `.al`. If a save block pushes in `.as` but the restore pops in `.al` (or vice versa), the stack silently misaligns. Every save/restore sequence must enforce matching widths — use `sep #$20` / `rep #$20` explicitly around each group rather than relying on inherited state.
 
+### `_` prefix labels are LOCAL — scoping trap
+In 64tass, labels starting with `_` are **local** to the enclosing non-local (global) label. A label `_helper` defined under `global_b:` is NOT visible from code under `global_a:`.
+
+**Symptom**: "not defined symbol" error on a label that clearly exists in the same file.
+
+**Example**:
+```asm
+spc_key_b
+  bra _shared_exit        ; ERROR: _shared_exit not visible here
+
+spc_key_right
+  bra _shared_exit        ; ERROR: _shared_exit not visible here either
+
+_shared_exit              ; local to the PREVIOUS global label (spc_key_right)
+  ; ... code ...
+```
+
+**Fix**: Use non-underscore names for labels that must be reachable across function boundaries:
+```asm
+spc_key_b
+  bra spc_shared_exit     ; OK: global label, visible everywhere
+
+spc_key_right
+  bra spc_shared_exit     ; OK
+
+spc_shared_exit           ; global label — accessible from any scope
+  ; ... code ...
+```
+
+**When to use `_` labels**: Only for labels that are purely internal to one function — loop targets, local branches, error handlers that no other function calls.
+
+### Branch distance limit: `bne`/`beq` ±128 bytes
+Conditional branches (`bne`, `beq`, `bcc`, `bcs`, `bmi`, `bpl`, `bvc`, `bvs`) use a signed 8-bit displacement (−128 to +127 bytes). Adding code between a branch and its target can push the distance past this limit.
+
+**Symptom**: `error: branch too far by +N bytes`
+
+**Fix**: Invert the condition and use an unconditional `jmp`:
+```asm
+; Before (fails when target is too far):
+  bne far_label
+
+; After (always works):
+  beq +
+  jmp far_label
++
+```
+
+Note: `bra` (unconditional branch) has the same ±128 byte limit. Use `jmp` (3 bytes, no distance limit) for long branches. `brl` (branch long) also works but is 3 bytes and less common.
+
 ### NMI stack budget assumption
 NMI and IRQ handlers push to the same hardware stack as menu recursion and save/restore sequences. The system is safe because: (1) the NMI handler has a bounded, fixed stack budget (no recursion), and (2) menu recursion depth is bounded by the menu structure (max ~3 levels). If either assumption changes, audit stack depth.
 
@@ -460,5 +509,7 @@ NMI and IRQ handlers push to the same hardware stack as menu recursion and save/
 | menudata.a65 | Done | All menu tables: main, config, BSX, browser, chip, SGB, in-game, savestates, SCIC |
 | sysinfo.a65 | Done | System info display |
 | data.i65 | Expanded | Menu WRAM vars: sm_*, menu_val_ptr, menu_aux_ptr, mev_*, mpos_* |
-| Known issues | — | Config value editing not yet working (under investigation) |
-| Stubs remaining | — | spcplayer |
+| spc700.a65 | Done | SPC700 low-level: apu_ram_init, handshake, SPC machine code blobs |
+| spcplay.a65 | Done | SPC player: spc700_load, transfer, restore, playback loop, warm boot exit, jukebox nav |
+| Known issues | — | "YNo" display artifact on kv8 cancel (cosmetic) |
+| Stubs remaining | — | menu_value_dialog_string, menu_value_dialog_kv16, menu_value_dialog_file (test-menu only) |

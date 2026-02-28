@@ -276,7 +276,7 @@ text_spcstartc  .text "Song:  "
                 .byte 0
 text_spcstartd  .text "Artist:"
                 .byte 0
-text_spc_statusbar .text "B:Back"
+text_spc_statusbar .text "<:Prev  B:Back  >:Next"
                 .byte 0
 
 spcstart_win_x  .byte 10

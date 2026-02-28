@@ -40,10 +40,13 @@ GAME_MAIN
   sta MCU_PARAM+2
   lda WARM_SIGNATURE
   cmp #$fa50
-  bne coldboot
-  eor WARM_COMPLEMENT  ; validate: signature ^ complement must = $ffff
+  beq +
+  jmp coldboot
++ eor WARM_COMPLEMENT  ; validate: signature ^ complement must = $ffff
   inc a
-  bne coldboot
+  beq +
+  jmp coldboot
++
 
   ; --- Warm boot: restore file browser state ---
   sta WARM_SIGNATURE   ; clear signature (A=0, prevents re-entry)
@@ -93,6 +96,32 @@ GAME_MAIN
 + sta cur_bright
   sta tgt_bright
   sta $2100            ; set brightness immediately
+
+  ; --- Check for jukebox track change ---
+  lda jukebox_active
+  beq _warm_normal
+
+  ; Jukebox mode: load and play the next/prev SPC track.
+  ; Reset SP to a clean value to prevent stack growth across
+  ; multiple track changes. The original call chain (from the
+  ; first SPC play via fileselloop→select_spc→spcplayer) is
+  ; discarded; we start a fresh call frame.
+  stz jukebox_active        ; clear flag (one-shot)
+  jsr jukebox_update_filesel ; sync file browser cursor
+  rep #$20
+  .al
+  lda #$1ff0
+  tcs
+  sep #$20
+  .as
+  jsr jukebox_load_spc      ; load SPC from MCU + enter player
+  ; If we reach here:
+  ;   - spc_exit: bad SPC file, player returned normally
+  ;   - B button: warm boot returned through jukebox_load_spc
+  ; Either way, enter the file browser.
+  jmp fileselloop
+
+_warm_normal
   plp                  ; restore processor state from caller
   rts                  ; return to code that issued CMD_RESET
 
@@ -1061,6 +1090,104 @@ backup_wram
   stx $2181              ; WRAM source address = $0000
   stz $2183              ; WRAM bank = $7E
   DMA7 $80, WRAM_BAK, $80, $2000
+  plp
+  rts
+
+; =============================================
+; jukebox_load_spc - Load SPC file at jukebox_sel_abs and enter player
+; Reads directory entry via [dirstart_addr], packs MCU parameters,
+; sends CMD_LOADSPC, waits for completion, calls spcplayer.
+; =============================================
+jukebox_load_spc
+  .databank 0
+  .dpage 0
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  ; Read directory entry at [dirstart_addr] + jukebox_sel_abs
+  ldy jukebox_sel_abs
+  rep #$20
+  .al
+  lda [dirstart_addr], y   ; dirent address (bytes 0-1)
+  sta MCU_PARAM+4
+  iny
+  iny
+  lda [dirstart_addr], y   ; bank byte (byte 2, in low byte of 16-bit read)
+  and #$00ff
+  sta MCU_PARAM+6
+  ; Pack CWD path for MCU
+  lda #FILESEL_CWD & $ffff
+  sta MCU_PARAM
+  sep #$20
+  .as
+  lda #FILESEL_CWD >> 16
+  sta MCU_PARAM+2
+  stz MCU_PARAM+3
+  ; Send load command and wait
+  lda #CMD_LOADSPC
+  sta MCU_CMD
+-
+  lda MCU_CMD
+  bne -
+  ; Enter the SPC player
+  jsr spcplayer
+  rts
+
+; =============================================
+; jukebox_update_filesel - Sync file browser cursor with jukebox track
+; Converts jukebox_sel_abs back to dirptr_addr + filesel_sel so the
+; file browser highlights the correct file when the user exits.
+; =============================================
+jukebox_update_filesel
+  .databank 0
+  .dpage 0
+  php
+  rep #$20
+  .al
+  rep #$10
+  .xl
+  ; Check if the target entry is within the current visible page
+  ; Visible entries: dirptr_addr to dirptr_addr + (listdisp-1)*4
+  lda jukebox_sel_abs
+  sec
+  sbc dirptr_addr           ; offset relative to current page start
+  bmi _jukebox_off_page     ; target is before current page
+  lsr
+  lsr                       ; / 4 = entry index within visible page
+  cmp listdisp
+  bcs _jukebox_off_page     ; target is past end of visible page
+  ; Target is on the current page — just update filesel_sel
+  sep #$20
+  .as
+  sta filesel_sel
+  lda #$01
+  sta filesel_dirty
+  plp
+  rts
+
+_jukebox_off_page
+  ; Target is not on the current page.
+  ; Reposition dirptr_addr so target is near the middle.
+  rep #$20
+  .al
+  lda jukebox_sel_abs
+  sec
+  sbc #36                   ; 9 entries * 4 = middle of 18-entry page
+  bcs +
+  lda #$0000                ; clamp to start of listing
++ sta dirptr_addr
+  ; Compute filesel_sel from new dirptr_addr
+  lda jukebox_sel_abs
+  sec
+  sbc dirptr_addr
+  lsr
+  lsr
+  sep #$20
+  .as
+  sta filesel_sel
+  lda #$01
+  sta filesel_dirty
   plp
   rts
 

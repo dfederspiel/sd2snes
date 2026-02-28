@@ -242,6 +242,12 @@ time_work_y    = $02B5  ; .byte - dialog Y position
 snes_system_config = $02B6  ; 40 bytes - copy of text_system, filled by sysinfo
 
 ; =============================================
+; Jukebox / SPC track navigation ($02DE-$02E0)
+; =============================================
+jukebox_active   = $02DE  ; .byte - nonzero = jukebox track change pending
+jukebox_sel_abs  = $02DF  ; .word - absolute byte offset of target entry in dir listing
+
+; =============================================
 ; Menu system variables ($0013-$002F, $00F6-$00FE)
 ;
 ; These MUST be in the DP range ($00-$FF) so they can be

@@ -198,6 +198,20 @@ spcplayer
   sta print_x
   jsr hiprint
 
+  ; Status bar with navigation hints (row 20, last interior row)
+  lda #text_spc_statusbar >> 16
+  ldx #text_spc_statusbar & $ffff
+  sta print_bank
+  stx print_src
+  stz print_pal
+  lda #22
+  sta print_count
+  lda #20
+  sta print_y
+  lda #21                   ; centered in 44-wide window
+  sta print_x
+  jsr hiprint
+
 spc_playloop
   lda isr_done              ; SPC player loop
   lsr
@@ -208,9 +222,55 @@ spc_playloop
   jsr read_pad
   lda pad_b
   bne spc_key_b
+  lda pad_left
+  bne spc_key_left
+  lda pad_right
+  bne spc_key_right
   bra spc_playloop
 
+; --- B button: exit player, return to file browser ---
 spc_key_b
+  stz jukebox_active        ; normal exit, not jukebox track change
+  bra spc_warm_exit
+
+; --- Left: previous SPC in directory ---
+spc_key_left
+  jsr spc_compute_abs      ; compute current absolute dir offset
+  jsr find_prev_spc         ; scan backward for previous SPC
+  bcc spc_playloop          ; not found, stay on current track
+  lda #$01
+  sta jukebox_active
+  bra spc_warm_exit
+
+; --- Right: next SPC in directory ---
+spc_key_right
+  jsr spc_compute_abs      ; compute current absolute dir offset
+  jsr find_next_spc         ; scan forward for next SPC
+  bcc spc_playloop          ; not found, stay on current track
+  lda #$01
+  sta jukebox_active
+  bra spc_warm_exit
+
+; --- Compute absolute directory offset of current selection ---
+; Sets jukebox_sel_abs = dirptr_addr + filesel_sel * 4
+spc_compute_abs
+  .databank 0
+  .dpage 0
+  rep #$20
+  .al
+  lda filesel_sel
+  and #$00ff
+  asl
+  asl
+  clc
+  adc dirptr_addr
+  sta jukebox_sel_abs
+  sep #$20
+  .as
+  rts
+
+; --- Shared warm boot exit (used by B, Left, Right) ---
+spc_warm_exit
   rep #$20
   .al
   tsc
@@ -236,6 +296,96 @@ spc_key_b
 
 spc_exit                    ; return from player in case of wrong SPC file data
   plp
+  rts
+
+; =============================================
+; find_next_spc - Scan directory forward for next SPC file
+; Input: jukebox_sel_abs = absolute byte offset of current entry
+; Output: carry set = found (jukebox_sel_abs updated), carry clear = not found
+; Uses [dirstart_addr] as directory base. Entry format: 4 bytes each
+;   [addr_lo, addr_hi, bank, type]. End sentinel: bank=0.
+; =============================================
+find_next_spc
+  .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  ldy jukebox_sel_abs
+_find_next_loop
+  ; Advance Y to next entry byte 0
+  iny
+  iny
+  iny
+  iny
+  ; Save entry start, check bank byte (end sentinel) at entry+2
+  phy
+  iny
+  iny
+  lda [dirstart_addr], y    ; bank byte
+  beq _find_next_fail_pop   ; bank=0 = end of listing
+  ; Check type byte at entry+3
+  iny
+  lda [dirstart_addr], y    ; type byte
+  ply                       ; restore Y to entry byte 0
+  cmp #TYPE_SPC
+  beq _find_next_found
+  bra _find_next_loop
+_find_next_found
+  sty jukebox_sel_abs
+  plp
+  sec                       ; carry set = found
+  rts
+_find_next_fail_pop
+  ply                       ; clean up stack
+_find_next_fail
+  plp
+  clc                       ; carry clear = not found
+  rts
+
+; =============================================
+; find_prev_spc - Scan directory backward for previous SPC file
+; Input: jukebox_sel_abs = absolute byte offset of current entry
+; Output: carry set = found (jukebox_sel_abs updated), carry clear = not found
+; =============================================
+find_prev_spc
+  .databank 0
+  .dpage 0
+  php
+  sep #$20
+  .as
+  rep #$10
+  .xl
+  ldy jukebox_sel_abs
+_find_prev_loop
+  ; Check if we're at the beginning
+  cpy #$0004
+  bcc _find_prev_fail       ; can't go before entry 0
+  ; Go to previous entry byte 0
+  dey
+  dey
+  dey
+  dey
+  ; Check type byte at entry+3
+  phy
+  iny
+  iny
+  iny
+  lda [dirstart_addr], y    ; type byte
+  ply                       ; restore Y to entry byte 0
+  cmp #TYPE_SPC
+  beq _find_prev_found
+  bra _find_prev_loop
+_find_prev_found
+  sty jukebox_sel_abs
+  plp
+  sec
+  rts
+_find_prev_fail
+  plp
+  clc
   rts
 
 ; =============================================
