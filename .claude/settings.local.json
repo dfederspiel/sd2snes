@@ -53,7 +53,8 @@
       "Bash(sort -k2)",
       "Bash(64tass:*)",
       "Bash(wc:*)",
-      "Bash(find \"c:\\\\Users\\\\david\\\\code\\\\sd2snes\\\\snes-64tass\" -name \"*.a65\" -exec grep -l \"frame\\\\|counter\\\\|tick\" {} ;)"
+      "Bash(find \"c:\\\\Users\\\\david\\\\code\\\\sd2snes\\\\snes-64tass\" -name \"*.a65\" -exec grep -l \"frame\\\\|counter\\\\|tick\" {} ;)",
+      "WebFetch(domain:gitlab.com)"
     ]
   }
 }
