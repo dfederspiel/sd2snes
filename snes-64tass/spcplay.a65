@@ -39,7 +39,29 @@ spcplayer
   lda #18
   sta window_h
   jsr push_window
-  jsr window_greyout
+
+  ; Clear tile buffers for clean gradient background (matches jukebox look)
+  ; push_window already saved the original tiles for B-exit restoration
+  phb
+  lda #$7e
+  pha
+  plb
+  .databank $7e
+  rep #$20
+  .al
+  lda #$0000
+  ldx #$0000
+_clear_tiles
+  sta BG2_TILE_BUF, x
+  sta BG1_TILE_BUF, x
+  inx
+  inx
+  cpx #$1000
+  bne _clear_tiles
+  sep #$20
+  .as
+  plb
+  .databank 0
 
   stz bar_wl
   dec bar_wl
