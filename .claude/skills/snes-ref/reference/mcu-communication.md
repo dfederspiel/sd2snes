@@ -5,25 +5,98 @@ The sd2snes has three processors that must cooperate: the **SNES CPU** (65816), 
 ## Architecture Overview
 
 ```
-+----------+     SNES Bus     +----------+     SPI     +----------+
-| SNES CPU | <--------------> |   FPGA   | <---------> |   MCU    |
-| (65816)  |   $002Axx R/W    | (bridge) |  snescmd_*  | (ARM C)  |
-+----------+                  +----------+             +----------+
++----------+     SNES Bus     +----------+     SPI     +----------+     SD/MMC
+| SNES CPU | <--------------> |   FPGA   | <---------> |   MCU    | <---------> SD Card
+| (65816)  |   $002Axx R/W    | (bridge) |  snescmd_*  | (ARM C)  |    fatfs
++----------+   $C0xxxx R/W    +----------+  sram_r/w   +----------+
                                    |
                               +----------+
-                              |   SRAM   |  $C00000-$FFFFFF
-                              | (SD card |  (ROM image, config,
-                              |  data)   |   directory listings)
+                              |   SRAM   |  16MB address space
+                              | (shared) |  $000000-$FFFFFF
                               +----------+
 ```
 
 The FPGA exposes two shared memory regions:
-1. **BRAM (Block RAM)** at `$002A00-$002CFF` — fast FPGA-internal RAM, accessible by both SNES and MCU
-2. **SRAM** at `$C00000-$FFFFFF` — large external RAM, holds ROM image, config, directory data
+1. **BRAM (Block RAM)** at `$002A00-$002CFF` — ~768 bytes of fast FPGA-internal RAM
+2. **SRAM** at `$000000-$FFFFFF` — 16MB address space, holds ROM image, config, directory data, and more
+
+## SRAM: The 16MB Shared Memory Space
+
+### Physical SRAM
+
+The FPGA maps a 24-bit (16MB) address space. The MCU accesses it via SPI commands (`set_mcu_addr()` + `FPGA_TX_BYTE(0x98)` for write, `0x88` for read). The SNES accesses it directly via the cartridge bus (long addressing like `lda @$C10000`).
+
+**Arbitration**: The FPGA handles bus arbitration transparently — no explicit mutex or handshake in firmware. The design relies on non-overlapping access patterns: the MCU writes to one SRAM region while the SNES reads from another, and the command protocol ensures they don't collide on the same region simultaneously.
+
+### Complete SRAM Memory Map
+
+Source: `src/memory.h`
+
+| Address | End | MCU Define | Size | Purpose | Status |
+|---------|-----|-----------|------|---------|--------|
+| `$000000` | `$BFFFFF` | `SRAM_ROM_ADDR` | Up to 12MB | Game ROM image | Active — loaded by LOADROM |
+| `$C00000` | `$C0FFFF` | `SRAM_MENU_ADDR` | 64KB | Menu ROM binary | Active — our code lives here |
+| `$C10000` | `$C7FFFF` | `SRAM_DIR_ADDR` | ~448KB | Directory listing | Active — READDIR writes here |
+| `$C80000` | `$CFFFFF` | `SRAM_DB_ADDR` | 512KB | Database | **Reserved, unused** |
+| `$CFFFFE` | `$CFFFFF` | `SRAM_NUM_CHEATS` | 2 bytes | Cheat count | Active |
+| `$D00000` | `$DFFFFF` | `SRAM_CHEAT_ADDR` | 1MB | Cheat code data | Active — LOAD_CHT |
+| `$E00000` | `$EFFFFF` | `SRAM_SAVE_ADDR` | 1MB | Game save RAM | Active — battery saves |
+| `$F00000` | `$FCFFFF` | `SRAM_SKIN_ADDR` | ~832KB | **Skin graphics** | **Defined but UNUSED** |
+| `$FD0000` | `$FDFFF` | `SRAM_SPC_DATA_ADDR` | 64KB | SPC audio data | Active — LOADSPC |
+| `$FE0000` | `$FE0FFF` | `SRAM_SPC_HEADER_ADDR` | 4KB | SPC header + DSP regs | Active — LOADSPC |
+| `$FE1000` | `$FEFFFF` | `SRAM_SAVESTATE_HANDLER_ADDR` | ~60KB | Savestate handler code | Active |
+| `$FF0000` | `$FF00FF` | `SRAM_MENU_FILEPATH_ADDR` | 256 bytes | Current directory path | Active |
+| `$FF0100` | `$FF019C` | `SRAM_MENU_CFG_ADDR` | ~157 bytes | Configuration block (`cfg_t`) | Active |
+| `$FF1000` | `$FF1003` | `SRAM_CMD_ADDR` | 4 bytes | MCU boot message area | Active |
+| `$FF1004` | `$FF1007` | `SRAM_PARAM_ADDR` | 4 bytes | Command parameters | Active |
+| `$FF1100` | `$FF110F` | `SRAM_MCU_STATUS_ADDR` | 16 bytes | MCU → SNES status | Active |
+| `$FF1110` | `$FF111F` | `SRAM_SNES_STATUS_ADDR` | 16 bytes | SNES → MCU status | Active |
+| `$FF1200` | `$FF141F` | `SRAM_SYSINFO_ADDR` | 544 bytes | System info display | Active |
+| `$FF1420` | `$FF3FFF` | `SRAM_LASTGAME_ADDR` | ~10.5KB | Recent games list | Active |
+| `$FF4000` | `$FFFEFF` | `SRAM_FAVORITEGAMES_ADDR` | ~48KB | Favorite games list | Active |
+| `$FFFF00` | `$FFFEFF` | `SRAM_SCRATCHPAD` | 256 bytes | MCU temporary storage | Active |
+| `$FFFFF0` | `$FFFFF7` | `SRAM_DIRID` | 8 bytes | Directory navigation ID | Active |
+
+### Free Regions for New Features
+
+| Address Range | Size | Notes |
+|--------------|------|-------|
+| `$C80000-$CFFFFD` | ~512KB | `SRAM_DB_ADDR` — reserved for "database", never implemented |
+| `$F00000-$FCFFFF` | ~832KB | `SRAM_SKIN_ADDR` — reserved for "skins", never implemented |
+
+The **skin region** at `$F00000` is particularly interesting:
+- `cfg_t` in `src/cfg.h` has a `skin_name[128]` field for a skin filename
+- `filetypes.c` recognizes `TYPE_SKIN` (.SKIN files) in directory listings
+- **No code exists** that reads or writes skin data to this SRAM region
+- This was clearly planned for custom menu themes — exactly what we'd want for image loading
+
+### SNES Access to SRAM
+
+The SNES reads SRAM via long addressing (24-bit). Key patterns from the menu ROM:
+
+```asm
+; Read a byte from config block
+lda @CFG_BRIGHTNESS_LIMIT    ; lda $FF019D (long absolute)
+
+; Read directory data
+lda @ROOT_DIR,x              ; lda $C10000,x (long indexed)
+
+; Write CWD path
+sta @FILESEL_CWD,x           ; sta $FF0000,x
+```
+
+**DMA from SRAM**: The SNES can DMA directly from any SRAM bank to WRAM or VRAM. The directory listing data at `$C10000` is read character-by-character via hiprint (not bulk DMA'd), but there's no technical reason you couldn't DMA a block of SRAM tile data directly to VRAM:
+
+```asm
+; Hypothetical: DMA pre-converted tile data from SRAM to VRAM
+ldx #$0000
+stx $2116            ; VRAM address
+DMA7 $01, tile_size, ^SRAM_SKIN_ADDR, !SRAM_SKIN_ADDR, $18
+```
 
 ## BRAM: The Command Channel ($002A00-$002CFF)
 
-BRAM is the primary communication mechanism between SNES and MCU. The FPGA maps it into SNES address space at `$002A00`. The MCU accesses it via SPI commands (`FPGA_CMD_SNESCMD_SETADDR`, `_READ`, `_WRITE`).
+BRAM is ~768 bytes of fast FPGA-internal RAM, the primary communication mechanism between SNES and MCU. The FPGA maps it into SNES address space at `$002A00`. The MCU accesses it via SPI commands.
 
 ### Command Registers
 
@@ -31,67 +104,249 @@ BRAM is the primary communication mechanism between SNES and MCU. The FPGA maps 
 |-------------|----------|------|-----------|---------|
 | `$002A00` | `SNESCMD_MCU_CMD` | 1 byte | SNES → MCU | SNES writes command byte here |
 | `$002A02` | `SNESCMD_SNES_CMD` | 1 byte | MCU → SNES | MCU writes status/ACK here |
-| `$002A04` | `SNESCMD_MCU_PARAM` | 8 bytes | Bidirectional | Command parameters |
+| `$002A04` | `SNESCMD_MCU_PARAM` | ~252 bytes | Bidirectional | Command parameters (to $2AFF) |
 
-### Command Protocol (Menu Mode)
+**Parameter space**: The BRAM parameter area at `$2A04` extends to `$2AFF` — approximately **252 bytes** of parameter data per command. Commands like READDIR use offsets +0 through +12 within this space.
 
-```
-SNES (menu ROM)                    MCU (ARM firmware)
+### MCU Access Functions (src/snes.c)
 
-  boot → wait_mcu_ready            main() → load menu.bin from SD
-  polls SNES_CMD for $55           → snes_set_snes_cmd(0x55)  [MCU_CMD_RDY]
-  SNES_CMD == $55 ← ─ ─ ─ ─ ─ ─ ─ ─ ┘
-  → filesel_init / fileselloop     → menu_main_loop() [polls MCU_CMD every 20ms]
+```c
+// Byte-level BRAM access
+fpga_set_snescmd_addr(addr);     // Set BRAM address pointer
+fpga_read_snescmd();             // Read 1 byte
+fpga_write_snescmd(val);         // Write 1 byte
 
-  User selects a ROM:
-  sta MCU_CMD [$01=LOADROM]  ─ ─ → reads MCU_CMD, dispatches cmd
-  echo_mcu_cmd echoes $01 → SNES_CMD
-  (SNES ignores this echo)
+// Block access (loops byte-by-byte via SPI)
+snescmd_readblock(buf, addr, len);   // Read block from BRAM
+snescmd_writeblock(buf, addr, len);  // Write block to BRAM
+snescmd_readstrn(buf, addr, maxlen); // Read null-terminated string
 
-  Meanwhile in game_handshake:
-  polls SNES_CMD for $55
-                                   load_rom(): loads ROM to SRAM
-                                   snes_set_snes_cmd(0x55) [ACK]
-  SNES_CMD == $55 ← ─ ─ ─ ─ ─ ─ ─ ─ ┘
-  sta MCU_CMD [$55]
-  sta MCU_CMD [$0B=FPGA_RECONF]─ → waits for CMD_FPGA_RECONF
-                                   reconfigures FPGA
-                                   snes_set_snes_cmd(0x77)
-  SNES_CMD == $77 ← ─ ─ ─ ─ ─ ─ ─ ─ ┘
-  → copies fadeloop to BRAM
-  → fadeloop: fade screen, fill
-    WRAM, CMD_RESET  ─ ─ ─ ─ ─ ─ → waits for CMD_RESET ($80)
-                                   → set_mapper() → assert_reset()
-                                   → init(filename)  [installs nmihook!]
-                                   → deassert_reset()
-                                   → game boots
+// Convenience
+snescmd_writebyte(val, addr);
+snescmd_readbyte(addr);
 ```
 
-### Key Command Values
+**Block transfer limit**: Practical max ~512-1024 bytes (limited by MCU RAM buffers). For large data, use SRAM (`sram_readblock`/`sram_writeblock`) instead.
 
-| Value | SNES Constant | MCU Constant | Meaning |
-|-------|--------------|--------------|---------|
-| `$01` | `CMD_LOADROM` | `SNES_CMD_LOADROM` | Load and launch a ROM |
-| `$02` | `CMD_SETRTC` | `SNES_CMD_SETRTC` | Set RTC from SNES time data |
-| `$0A` | `CMD_READDIR` | `SNES_CMD_READDIR` | Read directory listing to SRAM |
-| `$0B` | `CMD_FPGA_RECONF` | `SNES_CMD_FPGA_RECONF` | Reconfigure FPGA for game mapper |
-| `$55` | `CMD_MCU_RDY` | `MCU_CMD_RDY` | MCU is ready / ACK |
-| `$77` | — | — | FPGA reconfig complete signal |
-| `$80` | `CMD_RESET` | `SNES_CMD_RESET` | SNES requests reset |
-| `$89` | `CMD_RESET_LOOP_PASS` | `SNES_CMD_RESET_LOOP_PASS` | Reset hook timing check passed |
-| `$AA` | — | `MCU_CMD_ERR` | MCU error response |
+### SRAM Access Functions (src/memory.c)
 
-### The $55 Trap
+```c
+// Large block transfers (max 65535 bytes per call)
+sram_readblock(buf, addr, size);    // Read SRAM → MCU buffer
+sram_writeblock(buf, addr, size);   // Write MCU buffer → SRAM
 
-The MCU writes `$55` to SNES_CMD at **two different points**:
-1. **Boot ready signal** — `main.c:286`: `snescmd_writebyte(MCU_CMD_RDY, SNESCMD_SNES_CMD)` — tells the menu ROM the MCU is alive
-2. **LOADROM ACK** — `memory.c:300`: `snes_set_snes_cmd(0x55)` — inside `load_rom()` when `LOADROM_WAIT_SNES` flag is set
+// Streaming write (used by LOADSPC, LOADROM)
+set_mcu_addr(sram_addr);
+FPGA_SELECT();
+FPGA_TX_BYTE(0x98);                // Write mode
+for (j = 0; j < len; j++) {
+    FPGA_TX_BYTE(data[j]);
+    FPGA_WAIT_RDY();               // SPI sync after each byte
+}
+FPGA_DESELECT();
 
-The SNES side (`game_handshake`) polls for `$55` as the ACK. It does NOT get $55 from `echo_mcu_cmd()` — that echoes the command byte ($01) back, which the SNES ignores while polling.
+// SD card file I/O
+f_open(&file_handle, path, FA_READ);
+file_read();                        // Reads up to 512 bytes into file_buf
+file_getc();                        // Single byte with 512-byte internal buffer
+```
+
+## Complete MCU Command Table
+
+Source: `src/snes.h`, dispatched in `src/main.c`
+
+### Menu Mode Commands (SNES → MCU)
+
+| Code | Name | Parameters | SRAM Written | Timing |
+|------|------|-----------|-------------|--------|
+| `$01` | `LOADROM` | Path in BRAM+CWD | ROM → `$000000` | 1-10s |
+| `$02` | `SETRTC` | 12 bytes RTC data in BRAM | — | <1ms |
+| `$03` | `SYSINFO` | — | Sysinfo → `$FF1200` (continuous) | Ongoing |
+| `$04` | `LOADLAST` | 1-byte game index | ROM → `$000000` | 1-10s |
+| `$05` | `LOADSPC` | Path in BRAM+CWD | SPC → `$FD0000`, hdr → `$FE0000` | 100-500ms |
+| `$06` | `LOADFAVORITE` | 1-byte fav index | ROM → `$000000` | 1-10s |
+| `$07` | `SET_ALLOW_PAIR` | 1-byte flag | — | <1ms |
+| `$08` | `SET_VIDMODE_GAME` | 1-byte mode | — | <1ms |
+| `$09` | `SET_VIDMODE_MENU` | 1-byte mode | — | <1ms |
+| `$0A` | `READDIR` | Path+target+filter (see below) | Dir → `$C10000` | 50-200ms |
+| `$0B` | `FPGA_RECONF` | — | — | ~100ms |
+| `$0C` | `LOAD_CHT` | — | Cheats → `$D00000` | 10-100ms |
+| `$0D` | `SAVE_CHT` | — | (reads from SRAM) | 10-100ms |
+| `$0E` | `SAVE_CFG` | — | (reads from SRAM) | 10-50ms |
+| `$12` | `LED_BRIGHTNESS` | 1-byte level | — | <1ms |
+| `$13` | `ADD_FAVORITE` | — | Favorites → `$FF4000` | 10-50ms |
+| `$14` | `REMOVE_FAVORITE` | 1-byte index | Favorites → `$FF4000` | 10-50ms |
+
+### Game Mode Commands
+
+| Code | Name | Purpose |
+|------|------|---------|
+| `$40` | `SAVESTATE` | Save game state to SD |
+| `$41` | `LOADSTATE` | Load game state from SD |
+| `$80` | `RESET` | Pulse SNES reset |
+| `$81` | `RESET_TO_MENU` | Reset + return to menu |
+| `$82` | `ENABLE_CHEATS` | Enable WRAM cheat patching |
+| `$83` | `DISABLE_CHEATS` | Disable WRAM cheat patching |
+| `$84` | `KILL_NMIHOOK` | Disable NMI hook entirely |
+| `$85` | `TEMP_KILL_NMIHOOK` | Temporarily disable NMI hook |
+
+### MCU Responses (written to SNES_CMD $2A02)
+
+| Value | Meaning |
+|-------|---------|
+| `$55` | Ready / ACK |
+| `$AA` | Error |
+| `$77` | FPGA reconfig complete |
+| Other | Echo of command byte (transient) |
+
+### Command Dispatch Loop (src/main.c)
+
+The MCU runs a continuous polling loop with no explicit delay:
+
+```c
+while (!cmd) {
+    snescmd_writebyte(MCU_CMD_RDY, SNESCMD_SNES_CMD);  // Signal $55
+    cmd = menu_main_loop();      // Poll MCU_CMD (microsecond latency)
+    echo_mcu_cmd();              // Echo command to SNES_CMD
+    switch (cmd) { /* dispatch */ }
+}
+```
+
+**Response latency**: Microseconds from SNES writing MCU_CMD to MCU reading it. The bottleneck is always the operation itself (SD card reads), not the command dispatch.
+
+## READDIR: Model for SD → SRAM Data Transfer
+
+READDIR is the most relevant command for understanding how to build new data loading features. It demonstrates the full pattern: SNES sets parameters in BRAM → MCU reads SD card → MCU writes structured data to SRAM → SNES reads from SRAM.
+
+### SNES Side (filesel.a65)
+
+```asm
+; Set parameters in BRAM
+; +0: 24-bit pointer to CWD path string in SRAM
+; +4: 24-bit target SRAM address for output
+; +8: file type filter bytes (TYPE_PARENT, TYPE_SUBDIR, TYPE_ROM, etc.)
+; +12: terminator ($00)
+
+lda #CMD_READDIR
+sta @MCU_CMD            ; Write command to $002A00
+
+; Wait for MCU to finish
+jsl WRAM_WAIT_MCU       ; Polls SNES_CMD for $55
+```
+
+### MCU Side (src/main.c)
+
+```c
+void menu_cmd_readdir(void) {
+    uint8_t path[256];
+    SNES_FTYPE filetypes[16];
+
+    snes_get_filepath(path, 256);                              // Read path from BRAM param +0
+    snescmd_readstrn(filetypes, SNESCMD_MCU_PARAM + 8, 16);   // Read filter from BRAM param +8
+    uint32_t tgt_addr = snescmd_readlong(SNESCMD_MCU_PARAM + 4) & 0xffffff;
+
+    scan_dir(path, tgt_addr, filetypes);  // Read SD directory, write to SRAM
+}
+```
+
+### Output Format in SRAM
+
+READDIR writes a two-table structure to SRAM:
+
+**Pointer table** (at target address, e.g., `$C10000`):
+- 4-byte entries: `[offset_lo, offset_mid, offset_hi, file_type]`
+- Offset is relative to `SRAM_MENU_ADDR` ($C00000)
+- Terminated by 4 zero bytes
+
+**File data table** (at target + `$10000`, e.g., `$C20000`):
+- Variable-length entries: `[6-byte size string][null-terminated filename]`
+- Size string examples: `" 1024k"`, `" <dir>"`
+
+### File Type Enum (src/filetypes.h)
+
+| Value | Name | Extensions |
+|-------|------|-----------|
+| `$00` | `TYPE_UNKNOWN` | (skipped) |
+| `$01` | `TYPE_ROM` | .smc, .sfc, .fig, .swc, .bs, .gb, .gbc, .sgb |
+| `$02` | `TYPE_SUBDIR` | (directories) |
+| `$03` | `TYPE_PARENT` | (..) |
+| `$04` | `TYPE_SPC` | .spc |
+| `$05` | `TYPE_CHT` | .yml (cheat files) |
+| `$06` | `TYPE_SKIN` | .skin |
+
+## LOADSPC: Model for "Load File to Fixed SRAM Address"
+
+LOADSPC shows how the MCU streams a file from SD card directly to SRAM. This is the simplest model for a "load image data" command.
+
+Source: `src/memory.c:572-647`
+
+### Flow
+
+1. SNES writes `$05` to MCU_CMD
+2. MCU opens SPC file from SD card (path from BRAM parameters)
+3. MCU validates file size (min 65920 bytes for valid SPC)
+4. **Streams 64KB of SPC data** from SD → SRAM at `$FD0000`:
+   ```c
+   set_mcu_addr(spc_data_addr);   // $FD0000
+   FPGA_SELECT();
+   FPGA_TX_BYTE(0x98);            // SPI write mode
+   for (j = 0; j < bytes_read; j++) {
+       FPGA_TX_BYTE(file_buf[j]); // 512-byte chunks from SD
+       FPGA_WAIT_RDY();
+   }
+   FPGA_DESELECT();
+   ```
+5. Writes 256-byte SPC header to `$FE0000`
+6. Writes 128-byte DSP register block to `$FE0100`
+7. Signals completion by writing `$55` to SNES_CMD
+
+### Key Implementation Details
+
+- **512 bytes per SD read**: `file_read()` fills a 512-byte `file_buf`, then streams it to SRAM byte-by-byte via SPI
+- **No size limit**: The loop continues until EOF; files up to 16MB could theoretically be loaded
+- **Fixed target address**: Hardcoded to `SRAM_SPC_DATA_ADDR` — a generic version would take the target address as a parameter
+
+## Command Protocol Patterns
+
+### Pattern 1: Simple Command (instant)
+
+```
+SNES: sta MCU_CMD [$07 = SET_ALLOW_PAIR]
+MCU:  reads cmd, executes immediately
+MCU:  writes $55 → SNES_CMD
+SNES: reads SNES_CMD == $55, continues
+```
+
+### Pattern 2: Data Load (SD card involved)
+
+```
+SNES: writes parameters to BRAM ($2A04+)
+SNES: sta MCU_CMD [$0A = READDIR]
+SNES: calls WRAM_WAIT_MCU (polls SNES_CMD for $55)
+MCU:  reads params from BRAM
+MCU:  reads SD card (50-200ms)
+MCU:  writes data to SRAM
+MCU:  writes $55 → SNES_CMD
+SNES: SNES_CMD == $55, reads data from SRAM
+```
+
+### Pattern 3: Multi-phase (game launch)
+
+```
+SNES: sta MCU_CMD [$01 = LOADROM]
+MCU:  loads ROM to SRAM (1-10s)
+MCU:  writes $55 → SNES_CMD
+SNES: sta MCU_CMD [$0B = FPGA_RECONF]
+MCU:  reconfigures FPGA
+MCU:  writes $77 → SNES_CMD
+SNES: copies fadeloop to BRAM, fades screen
+SNES: sta MCU_CMD [$80 = RESET]
+MCU:  resets SNES, installs nmihook, deasserts reset
+```
 
 ## BRAM: The NMI Hook System ($002A10-$002AFF)
 
-This is the **most critical** and **least obvious** piece of the sd2snes architecture. After a game loads, the FPGA intercepts the game's NMI vector and redirects it to code stored in BRAM. This code provides:
+After a game loads, the FPGA intercepts the game's NMI vector and redirects it to code stored in BRAM. This code provides:
 - In-game button combos (reset to menu, enable/disable cheats)
 - WRAM cheat patching
 - Savestate support
@@ -99,159 +354,102 @@ This is the **most critical** and **least obvious** piece of the sd2snes archite
 
 ### How the NMI Hook Gets Installed
 
-**Source**: The menu ROM (`nmihook.a65`) contains ~240 bytes of NMI/reset hook code. In the original snescom build, the linker places this at some address (e.g., `$C09A0E`).
+**Source**: The menu ROM contains ~240 bytes of NMI/reset hook code.
 
-**Pointer at $C0FF00**: The ROM header at `$C0FF00` contains a 16-bit word pointing to the hook code within the ROM:
+**Pointer at $C0FF00**: The ROM at `$C0FF00` contains a 16-bit word pointing to the hook code:
 ```asm
-; header.a65 (64tass port)
 * = $C0FF00
 nmihook_ptr
-  .word nmihook & $ffff    ; e.g., $9A0E → MCU reads from $C09A0E in SRAM
+  .word nmihook & $ffff    ; MCU reads from $C0xxxx in SRAM
 ```
 
-**MCU reads the pointer**: During `init()` (called after SNES reset, before deassert_reset):
+**MCU reads the pointer** during `init()` (after SNES reset, before deassert_reset):
 ```c
-// snes.c:587-593
 void snescmd_prepare_nmihook() {
-  uint16_t bram_src = sram_readshort(SRAM_MENU_ADDR + MENU_ADDR_BRAM_SRC);
-  // SRAM_MENU_ADDR = $C00000, MENU_ADDR_BRAM_SRC = $FF00
-  // So this reads 2 bytes from $C0FF00 in SRAM = the nmihook_ptr value
-  uint8_t bram[BRAM_SIZE];  // BRAM_SIZE = 240
-  sram_readblock(bram, SRAM_MENU_ADDR + bram_src, BRAM_SIZE);
-  // Reads 240 bytes starting at SRAM_MENU_ADDR + bram_src
-  snescmd_writeblock(bram, SNESCMD_INGAME_HOOK, BRAM_SIZE);
-  // Writes to BRAM at $2A10 (SNESCMD_INGAME_HOOK)
+    uint16_t bram_src = sram_readshort(SRAM_MENU_ADDR + MENU_ADDR_BRAM_SRC);
+    uint8_t bram[BRAM_SIZE];  // BRAM_SIZE = 240
+    sram_readblock(bram, SRAM_MENU_ADDR + bram_src, BRAM_SIZE);
+    snescmd_writeblock(bram, SNESCMD_INGAME_HOOK, BRAM_SIZE);
 }
 ```
 
-**BRAM_SIZE** = 256 - (0x2A10 - 0x2A00) = **240 bytes**. This covers $2A10 through $2AFF.
-
-**FPGA patches branches**: The hook code contains `bra` instructions at fixed byte offsets that the FPGA patches at runtime based on feature flags (cheats enabled, button combo state, etc.). The byte positions are hardcoded in the FPGA verilog.
+**FPGA patches branches**: The hook code contains `bra` instructions at fixed byte offsets that the FPGA patches at runtime. The byte positions are hardcoded in the FPGA verilog.
 
 ### BRAM Memory Map During Gameplay
 
 | SNES Address | MCU Name | Purpose |
 |-------------|----------|---------|
-| `$002A10` | `SNESCMD_INGAME_HOOK` | NMI hook entry point (FPGA redirects NMI here) |
-| `$002A7D` | `SNESCMD_RESET_HOOK` | Reset hook (timing verification + `jmp ($fffc)`) |
-| `$002AD8` | `SNESCMD_WRAM_CHEATS` | WRAM cheat patch code (programmed by MCU) |
+| `$002A10` | `SNESCMD_INGAME_HOOK` | NMI hook entry point |
+| `$002A7D` | `SNESCMD_RESET_HOOK` | Reset hook |
+| `$002AD8` | `SNESCMD_WRAM_CHEATS` | WRAM cheat patch code |
 | `$002BA0` | `SNESCMD_NMI_RESET` | Reset command word |
-| `$002BF0` | `NMI_PAD` | Joypad state (read by hook) |
-| `$002BF2` | `NMI_CMD` | NMI command (button combo → command mapping) |
+| `$002BF0` | `NMI_PAD` | Joypad state |
+| `$002BF2` | `NMI_CMD` | NMI command |
 | `$002BFC` | `NMI_BUTTONS_ENABLE` | Button enable flag |
-| `$002BFD` | `NMI_VECT_DISABLE` | Write here to return to game's real NMI |
-| `$002BFE` | `NMI_WRAM_PATCH_DISABLE` | WRAM patch enable/disable |
-| `$002BFF` | `NMI_WRAM_PATCH_COUNT` | Number of active WRAM cheats |
-| `$002C00` | `SNESCMD_EXE` | Executable code area (MCU can inject code here) |
+| `$002BFD` | `NMI_VECT_DISABLE` | Disable NMI redirect |
+| `$002BFE` | `NMI_WRAM_PATCH_DISABLE` | WRAM patch disable |
+| `$002BFF` | `NMI_WRAM_PATCH_COUNT` | Active cheat count |
+| `$002C00` | `SNESCMD_EXE` | Executable code area |
 
-### NMI Hook Execution Flow
+### BRAM During Game Launch (Temporary Reuse)
 
-When a game's NMI fires:
-1. FPGA intercepts the NMI vector and redirects to `$002A10`
-2. Hook saves processor state, reads `$4218` (joypad)
-3. FPGA-controlled branch #1: skip to exit if buttons disabled or manual read in progress
-4. If buttons enabled: check for button combos → map to NMI_CMD
-5. Echo NMI_CMD to MCU_CMD (MCU can react to button combos)
-6. FPGA-controlled branch #2: decide cheats/savestate/stop/exit
-7. If cheats enabled: `jsr NMI_WRAM_CHEATS` ($2AD8) — MCU-programmed cheat code
-8. If savestate: `jsl savestate_handler`
-9. Exit: restore state, `jmp ($FF77)` — FPGA patches this vector to point to game's real NMI handler
+BRAM is temporarily repurposed during game launch:
+1. `game_handshake`: SNES communicates via MCU_CMD/SNES_CMD
+2. After FPGA reconfig: SNES copies `fadeloop` routine to BRAM ($002A10)
+3. `fadeloop` executes from BRAM: fades screen, fills WRAM, sends CMD_RESET
+4. MCU's `init()` overwrites BRAM with nmihook code
+5. Game boots: FPGA redirects NMI to hook code in BRAM
 
-### The nmihook Binary Blob
+## Designing New Data Transfer Features
 
-In our 64tass port, we cannot reassemble nmihook.a65 directly because:
-1. The FPGA patches branch instructions at **fixed byte offsets** within the 240-byte block
-2. Any change in code size/layout would misalign the FPGA's hardcoded patch positions
-3. The hook contains `jsl savestate_handler` pointing to a specific ROM address in the original build
+### What's Possible Without MCU Firmware Changes
 
-**Solution**: Extract the 240 bytes from the original snescom-built `menu.bin` at the offset indicated by the nmihook_ptr, and include them as a binary blob:
-```asm
-; main.a65
-nmihook
-  .binary "nmihook.bin"    ; 240 bytes, byte-exact from original ROM
+The existing command set can already support some image loading patterns:
+
+1. **LOADSPC pattern**: If image data were stored as `.spc` files (or the SPC slot is temporarily repurposed), the SNES could use CMD_LOADSPC to load 64KB to `$FD0000`, then DMA from there to VRAM. **Hack-ish but functional.**
+
+2. **Pre-loaded data in menu ROM**: Images smaller than ~32KB could be embedded in the 64KB menu ROM itself and accessed directly from bank $C0. **Limited by ROM space.**
+
+3. **SRAM_SKIN_ADDR**: The skin region at `$F00000` is already allocated. If a skin loader were added to the MCU firmware, it would be a natural fit.
+
+### What Would Require MCU Firmware Changes
+
+A proper image gallery would need:
+
+```
+New command: CMD_LOAD_BLOCK ($XX)
+Parameters:
+  +0: 24-bit SRAM target address (e.g., $F00000)
+  +4: null-terminated filename path
+MCU action:
+  1. Open file from SD card
+  2. Stream entire file contents to target SRAM address
+  3. Signal $55 when done
+SNES action:
+  1. Set params in BRAM
+  2. Write CMD_LOAD_BLOCK to MCU_CMD
+  3. Wait for $55
+  4. DMA from SRAM target to VRAM
 ```
 
-**Verification**: The pointer at $C0FF00 must be `nmihook & $ffff`. If this points to wrong data, every game crashes on first NMI.
+This is essentially LOADSPC but with a configurable target address and no format-specific parsing. The MCU firmware change would be ~20 lines of C in the command dispatch switch.
 
-## SRAM: Shared Data Regions
+### Bandwidth Estimates
 
-The FPGA maps SRAM into the SNES address space. Both the MCU and SNES can access it (the MCU via SPI, the SNES via the cartridge bus).
+- **SD → SRAM**: ~200-500 KB/s (SPI bottleneck, byte-at-a-time with FPGA_WAIT_RDY)
+- **SRAM → VRAM via DMA**: ~2.68 MB/s (SNES DMA rate, limited to VBlank)
+- **Loading a 32KB 4bpp tile set**: ~60-160ms from SD → SRAM
+- **DMA 32KB SRAM → VRAM**: ~12ms (fits in one VBlank)
 
-### Key SRAM Regions
+A gallery could show a new image every ~200ms from button press — fast enough to feel responsive.
 
-| SRAM Address | MCU Define | SNES Access | Purpose |
-|-------------|-----------|-------------|---------|
-| `$C00000` | `SRAM_MENU_ADDR` | Bank $C0 | Menu ROM image (64KB) |
-| `$C10000` | `SRAM_DIR_ADDR` | `ROOT_DIR` | Directory listing from MCU |
-| `$FF0000` | `SRAM_MENU_FILEPATH_ADDR` | `FILESEL_CWD` | Current working directory path |
-| `$FF0100` | `SRAM_MENU_CFG_ADDR` | `CFG_ADDR` | Configuration block |
-| `$FF1000` | `SRAM_CMD_ADDR` | — | Boot print message area |
-| `$FF1100` | `SRAM_MCU_STATUS_ADDR` | `ST_MCU_ADDR` | MCU → SNES status (RTC valid, etc.) |
-| `$FF1110` | `SRAM_SNES_STATUS_ADDR` | `ST_SNES_ADDR` | SNES → MCU status (Ultra16, Satellaview) |
-| `$FF1200` | `SRAM_SYSINFO_ADDR` | `SYSINFO_BLK` | System information block |
-| `$FF1420` | `SRAM_LASTGAME_ADDR` | `LAST_GAME` | Last game filename |
+## The $55 Trap
 
-### SNES → MCU Data Flow via SRAM
+The MCU writes `$55` to SNES_CMD at **two different points**:
+1. **Boot ready signal** — `main.c:286`: tells the menu ROM the MCU is alive
+2. **LOADROM ACK** — `memory.c:300`: inside `load_rom()` when done loading
 
-The SNES writes data to SRAM that the MCU reads later:
-
-1. **File selection**: `select_file` in filesel.a65 writes the CWD path to `MCU_PARAM` ($2A04) and the selected filename pointer to `MCU_CMD+$08` ($2A08). The MCU's `get_selected_name()` reads these via BRAM and reconstructs the full path from SRAM.
-
-2. **Hardware detection**: `detect_ultra16` and `detect_satellaview` (run at boot) write status flags to SRAM:
-   ```
-   $FF1110 (ST_IS_U16)          — 1 if Ultra16 detected
-   $FF1111 (ST_U16_CFG)         — Ultra16 config byte
-   $FF1112 (ST_HAS_SATELLAVIEW) — 1 if Satellaview base unit present
-   ```
-   The MCU reads these via `status_save_from_menu()` → `STS` struct. This affects:
-   - Reset pulse duration: Ultra16 needs 60x longer reset (300ms vs 5ms)
-   - Satellaview base emulation: disabled if real hardware detected
-
-3. **Configuration**: Settings written to `CFG_ADDR` ($FF0100) are saved by MCU via `CMD_SAVE_CFG`.
-
-### MCU → SNES Data Flow via SRAM
-
-1. **Directory listings**: MCU reads SD card directories and writes them to `$C10000` (`ROOT_DIR`). Format: 23-byte entries (type byte + padded filename). SNES reads these to populate the file browser.
-
-2. **MCU status**: MCU writes to `$FF1100` (`ST_MCU_ADDR`):
-   ```
-   $FF1100 (ST_RTC_VALID)         — 1 if RTC has valid time
-   $FF1101 (ST_NUM_RECENT_GAMES)  — count of recent games
-   $FF1102 (ST_PAIRMODE)          — pair mode state
-   $FF1103 (ST_NUM_FAVORITE_GAMES)— count of favorites
-   ```
-
-3. **Configuration**: MCU writes saved config to `$FF0100` before signaling ready.
-
-## BRAM During Game Launch (Temporary Use)
-
-During the game launch sequence, BRAM is temporarily repurposed:
-
-1. **Before launch**: BRAM contains the menu's communication registers (MCU_CMD, SNES_CMD, etc.)
-2. **game_handshake**: SNES sends CMD_LOADROM, waits for $55 ACK, sends CMD_FPGA_RECONF
-3. **After FPGA reconfig ($77 signal)**: SNES copies `fadeloop` routine from WRAM to BRAM ($002A10)
-4. **fadeloop executes from BRAM**: Fades screen, fills WRAM with $55, sends CMD_RESET
-5. **MCU receives CMD_RESET**: Calls `assert_reset() → init() → deassert_reset()`
-6. **init() overwrites BRAM**: `snescmd_prepare_nmihook()` copies the NMI hook code to BRAM, **replacing the fadeloop**
-7. **Game boots**: FPGA redirects game NMI to the hook code now in BRAM
-
-This is why the fadeloop must be small enough to fit in BRAM, and why nmihook overwrites it — they share the same address space but are never needed simultaneously.
-
-## Debugging Checklist
-
-When game launching fails (black screen after file selection):
-
-1. **Check nmihook_ptr at $C0FF00**: Must be a valid 16-bit offset into the ROM. Read 2 bytes at ROM offset $3F00 (since $C0FF00 - $C0C000 = $3F00 in a 64KB HiROM). Zero = broken.
-
-2. **Verify nmihook data at the pointed offset**: The 240 bytes must be actual 65816 hook code, not zeros or unrelated code. Compare against known-good original ROM.
-
-3. **Check fadeloop copies correctly**: `store_blockram_routine` copies fadeloop to BRAM after FPGA reconfig. Verify the MVN operands are correct (64tass reverses src/dst vs snescom).
-
-4. **Check WRAM routines are present**: `store_wram_routines` must have correct DMA7 sizes. If the copy is too short, the `rtl` at the end isn't copied → execution runs into garbage.
-
-5. **Check SRAM status flags**: `detect_ultra16` and `detect_satellaview` must run before `wait_mcu_ready`. Missing = garbage in STS flags = wrong reset timing.
-
-6. **Check clear_wram runs early**: WRAM must be initialized before `setup_gfx` (which sets `window_stack_head = $FFFF`). Without this, `push_window` in filesel corrupts WRAM routines.
+The SNES side (`game_handshake`) polls for `$55` as the ACK. It does NOT get $55 from `echo_mcu_cmd()` — that echoes the command byte back, which the SNES ignores while polling.
 
 ## Critical Lesson: The ROM Binary Is an API
 
@@ -261,9 +459,24 @@ The menu ROM is not just SNES code — it's also a **data source** that the MCU 
 |-----------|-----------|-----------------|
 | `$C0FF00` | `snescmd_prepare_nmihook()` | 16-bit pointer to 240 bytes of NMI hook code |
 | `$FF0000` | `get_selected_name()` (via BRAM param) | Null-terminated CWD path string |
-| `$FF0100` | config system | Configuration structure |
+| `$FF0100` | config system | Configuration structure (`cfg_t`, ~157 bytes) |
 | `$FF1110` | `status_save_from_menu()` | 3-byte snes_status_t (Ultra16, Satellaview flags) |
 
-If ANY of these offsets contain wrong data, the MCU will silently use garbage values. There are no checksums or validation — the MCU trusts the ROM binary completely.
+If ANY of these offsets contain wrong data, the MCU will silently use garbage values. There are no checksums or validation.
 
-**When porting the ROM**: Every byte of the binary matters, not just the SNES-executable code. Data structures, pointers, and binary blobs that the MCU reads must be preserved exactly. A missing `.word` at `$C0FF00` can cause every game to crash even though the menu ROM itself works perfectly.
+## Debugging Checklist
+
+When game launching fails (black screen after file selection):
+
+1. **Check nmihook_ptr at $C0FF00**: Must be a valid 16-bit offset into the ROM. Zero = broken.
+2. **Verify nmihook data at the pointed offset**: The 240 bytes must be actual 65816 hook code.
+3. **Check fadeloop copies correctly**: MVN operands reversed in 64tass vs snescom.
+4. **Check WRAM routines are present**: DMA7 sizes in `store_wram_routines` must match actual routine sizes.
+5. **Check SRAM status flags**: `detect_ultra16`/`detect_satellaview` must run before `wait_mcu_ready`.
+6. **Check clear_wram runs early**: WRAM must be initialized before `setup_gfx`.
+
+When MCU communication fails (menu hangs, "Loading..." forever):
+
+7. **Check WRAM_WAIT_MCU routine**: Must be an infinite loop (no timeout). MCU operations take variable time.
+8. **Check processor state preservation**: WRAM routines must `php`/`plp` to preserve caller's register widths.
+9. **Check for emulator vs hardware**: In emulator, SNES_CMD never becomes $55 (no MCU). Emulator detection must timeout gracefully.

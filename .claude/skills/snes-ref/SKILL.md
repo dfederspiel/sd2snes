@@ -199,5 +199,5 @@ Fires every VBlank (~60Hz). DMAs BG1/BG2 tile buffers WRAM->VRAM, updates cursor
 - [Hardware Math](reference/hardware-math.md) — Hardware multiply ($4202/$4203), divide ($4204-$4206), result registers ($4214-$4217), cycle wait times, signed multiply via Mode 7 regs, codebase examples
 - [65816 Addressing Modes](reference/addressing-modes.md) — All addressing modes with snescom syntax
 - [Mixed-Mode Transfers](reference/mixed-mode-transfers.md) — Hidden B register trap: TAX/TAY in mixed M=1/X=0 mode, safe patterns, audit checklist
-- [MCU Communication](reference/mcu-communication.md) — SNES ROM ↔ MCU/FPGA protocol: BRAM command channel, NMI hook system, game launch handshake, SRAM data regions, ROM-as-API concept
+- [MCU Communication](reference/mcu-communication.md) — SNES ROM ↔ MCU/FPGA protocol: complete 16MB SRAM memory map, full MCU command table (30+ commands), BRAM command channel, READDIR/LOADSPC as models for SD→SRAM data transfer, NMI hook system, game launch handshake, SRAM_SKIN_ADDR (reserved but unused ~832KB), bandwidth estimates, ROM-as-API concept
 - [SPC700 Sound System](reference/spc700-sound.md) — SPC700 CPU, DSP registers (KON/KOF/FLG/voice regs), BRR sample format, I/O port crossover, IPL boot handshake protocol, SPC file loading sequence, instruction injection
