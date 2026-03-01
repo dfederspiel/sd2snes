@@ -28,6 +28,7 @@
 #include "sysinfo.h"
 #include "cfg.h"
 #include "savestate.h"
+#include "esp32.h"
 
 //usb
 #include "usb.h"
@@ -104,6 +105,7 @@ int main(void) {
  /* and setup & connect PLL0 again */
   clock_init();
 
+  esp32_init();  /* Now PLL is connected, PCLK=96MHz, baud rate correct */
   led_std();
   sdn_init();
 
@@ -112,7 +114,7 @@ int main(void) {
   CDC_Init (0x00);
   USB_Connect (1);
 
-  printf("\n\n" DEVICE_NAME "\n===============\nfw ver.: " CONFIG_VERSION "\ncpu clock: %d Hz\n", CONFIG_CPU_FREQUENCY);
+  printf("\n\n" DEVICE_NAME " +ESP32\n===============\nfw ver.: " CONFIG_VERSION "\ncpu clock: %d Hz\n", CONFIG_CPU_FREQUENCY);
 #ifdef CONFIG_MK3_STM32
   printf("AHB1ENR=%lx\n", RCC->AHB1ENR);
   printf("AHB2ENR=%lx\n", RCC->AHB2ENR);
@@ -420,7 +422,8 @@ int main(void) {
 // uint8_t snes_res;
     while(fpga_test() == FPGA_TEST_TOKEN) {
       cli_entrycheck();
-      //usb upload/boot/lock  
+      esp32_poll();
+      //usb upload/boot/lock
       usb_cmd |= usbint_handler();
       if (usb_cmd == SNES_CMD_GAMELOOP) usb_cmd = 0;
 

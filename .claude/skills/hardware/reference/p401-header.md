@@ -59,13 +59,13 @@ is they're all crystal, power, or reset — none are GPIO.*
 
 ## Functional Groups
 
-### UART0 — Free, ideal for ESP32 sidecar
-- **Pos 1** (P0.3/RXD0) → connect to ESP32 TX
-- **Pos 8** (P0.2/TXD0) → connect to ESP32 RX
-- **Pos 6** (GND) → connect to ESP32 GND
-- **Pos 7** or **Pos 13** (VDD 3.3V) → ESP32 3.3V (if current budget allows)
-- Hardware UART0, DMA-capable, up to 6 Mbaud
-- Not used by firmware — completely free
+### UART0 — PROVEN WORKING with ESP32 sidecar (2026-03-01)
+- **Pos 8** (P0.2/TXD0) → ESP32 GPIO4 (RX)
+- **Pos 1** (P0.3/RXD0) ← ESP32 GPIO2 (TX)
+- **Pos 6** (GND) → ESP32 GND
+- ESP32 powered via its own USB cable (don't power from P401 VDD)
+- **Baud**: 115200 8N1, DLL=13 (PCLK=24MHz = CCLK/4 default)
+- Bidirectional PING/PONG verified. See [ESP32 Sidecar Reference](esp32-sidecar.md)
 
 ### JTAG — Full 5-pin JTAG interface
 - **Pos 2** = TDI (test data in)
@@ -102,23 +102,36 @@ On power-on, the firmware prints to UART3 (pos 12) at **921600 baud, 8N1**:
 ```
 ?                          ← bootloader init (briefly at 115200, then reinit to 921600)
 
-sd2snes Mk.III             ← main firmware banner
+sd2snes Mk.III +ESP32      ← main firmware banner (custom build)
 ===============
-fw ver.: 1.11.1
+fw ver.: 1.11.1-esp32
 cpu clock: 96000000 Hz
-PCONP=<hex>
+PCONP=a2a18248             ← bit 3 set = UART0 powered on
+[ESP32] UART0 ready (115200 8N1, DLL=13)
+card seems to be sending data, attempting deselect
+CMD7 timed out
+sd_init start
+RCA: aaaa
+...
 (                          ← menu ROM load start
 )                          ← menu ROM load complete
 RTC valid!                 ← (or "RTC invalid!")
 SNES GO!                   ← handoff to SNES
 test sram
 ok
+[ESP32] Hello from ESP32: <N>
+[ESP32] PONG seq=0         ← first successful PING/PONG
+[ESP32] PONG seq=1
 ```
 
-Source files: `src/main.c` (banner, ROM load, RTC, SNES GO), `src/bootldr/uart.c` (`?`),
-`src/fpga.c` (FPGA config progress if needed: `P`, `p`, `C`, `c`).
+Source files: `src/main.c` (banner, ROM load, RTC, SNES GO), `src/esp32.c` (ESP32 lines),
+`src/bootldr/uart.c` (`?`), `src/fpga.c` (FPGA config: `P`, `p`, `C`, `c`).
 
 Additional output appears during file browser navigation (directory reads) and game loading.
+
+**Reading UART3 without a USB-serial adapter**: An ESP32 with a free UART can tap this line.
+Wire P401 pos 12 (TXD3) → ESP32 GPIO34 (input-only). Configure `Serial1.begin(921600, SERIAL_8N1, 34, -1)`.
+Add INPUT_PULLUP on GPIO34 and filter non-printable bytes to suppress noise when SNES is off.
 
 ## ⚠️ Warning: Position 14 = HWREV0
 

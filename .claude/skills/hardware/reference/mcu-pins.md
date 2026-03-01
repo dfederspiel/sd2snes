@@ -196,13 +196,15 @@ Bit-bang SPI on free GPIO is more practical than working around SSP1 conflicts.
 
 ## Expansion Recommendations
 
-### For ESP32 sidecar (networking)
-**UART0 via P401 header (simplest, 3 wires, no MCU soldering)**:
-- P401 pos 8 → P0.2/TXD0 (MCU pin 79) → connect to ESP32 RX
-- P401 pos 1 → P0.3/RXD0 (MCU pin 80) → connect to ESP32 TX
-- P401 pos 6 → GND → connect to ESP32 GND
-- Hardware UART0, DMA-capable, existing driver infrastructure in firmware
-- 921600 baud = ~100 KB/s, sufficient for file transfers
+### For ESP32 sidecar (networking) — PROVEN WORKING (2026-03-01)
+**UART0 via P401 header (3 data wires + 1 debug tap, no MCU soldering)**:
+- P401 pos 8 → P0.2/TXD0 (MCU pin 79) → ESP32 GPIO4 (RX)
+- P401 pos 1 → P0.3/RXD0 (MCU pin 80) ← ESP32 GPIO2 (TX)
+- P401 pos 12 → P0.25/TXD3 (MCU pin 7) → ESP32 GPIO34 (debug tap, read-only)
+- P401 pos 6 → GND → ESP32 GND
+- ESP32 powered via its own USB cable
+- 115200 baud 8N1, DLL=13 (PCLK=24MHz). Bidirectional PING/PONG verified.
+- See [ESP32 Sidecar Reference](esp32-sidecar.md) for full details
 
 **SPI bit-bang approach (faster, 5 wires)**:
 - Pick any 4 free GPIO (e.g., P0.2-P0.5) + GND

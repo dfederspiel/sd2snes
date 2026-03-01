@@ -81,6 +81,7 @@ SRC += printf.c fileops.c fpga.c fpga_spi.c snes.c smc.c
 SRC += memory.c filetypes.c faulthandler.c sort.c crc32.c cic.c
 SRC += cli.c xmodem.c rle.c msu1.c crc16.c sysinfo.c
 SRC += cfg.c cheat.c yaml.c savestate.c sgb.c hwinfo.c
+SRC += esp32.c
 
 SRC += usbdesc.c usbcore.c usbuser.c cdcuser.c usbinterface.c
 

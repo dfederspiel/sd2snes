@@ -9,4 +9,5 @@ Reference for hardware-level work on the FXPAK Pro (sd2snes Mk.III).
 
 ## Documents
 - [MCU Pin Map](reference/mcu-pins.md) — Complete LPC1756 GPIO usage and free pin inventory
-- [Expansion Header P401](reference/p401-header.md) — 14-pin unsoldered header investigation
+- [Expansion Header P401](reference/p401-header.md) — 14-pin debug+expansion header (fully mapped)
+- [ESP32 Sidecar](reference/esp32-sidecar.md) — UART0 communication with ESP32 (proven working)

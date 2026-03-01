@@ -45,6 +45,7 @@
 #include "sgb.h"
 #include "version.h"
 #include "hwinfo.h"
+#include "esp32.h"
 
 uint32_t saveram_crc, saveram_crc_old;
 uint8_t sram_crc_valid;
@@ -365,6 +366,7 @@ uint8_t menu_main_loop() {
     }
     sleep_ms(20);
     cli_entrycheck();
+    esp32_poll();
     if (!cmd) {
       cmd = usbint_handler();
     }
