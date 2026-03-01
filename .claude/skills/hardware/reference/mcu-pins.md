@@ -49,13 +49,17 @@ Source: `src/config-mk3` (CONFIG defines) and `src/bootldr/main.c` (PINSEL setup
 
 Note: P4.28/P4.29 are shared with UART3 via PINSEL muxing. After FPGA config, they switch to UART3 TX/RX.
 
-### UART3 (Debug Serial) — 115200 baud
-| Pin | Function | Mux |
-|-----|----------|-----|
-| P0.25 | TXD3 | PINSEL AF3 (set in bootldr/main.c) |
-| P0.26 | RXD3 | PINSEL AF3 (set in bootldr/main.c) |
+### UART3 (Debug Serial) — 921600 baud 8N1
+| Pin | Phys | Function | Mux | P401 |
+|-----|------|----------|-----|------|
+| P0.25 | 7 | TXD3 | PINSEL AF3 | pos 12 |
+| P0.26 | 6 | RXD3 | PINSEL AF3 | pos 4 |
 
-Source: `bootldr/main.c` line 34-35:
+Baud rate: `src/config-mk3` line 66: `CONFIG_UART_BAUDRATE = 921600`
+Note: Bootloader briefly inits at 115200 (hardcoded divisor in `bootldr/uart.c:122`),
+then `main.c:99` reinits at 921600 via `baud2divisor()`. All boot banner text is at 921600.
+
+Pin mux source: `bootldr/main.c` line 34-35:
 ```c
 /* connect UART3 on P0[25:26] + SSP0 on P0[15:18] + MAT3.0 on P0[10] */
 LPC_PINCON->PINSEL1 = BV(18) | BV(19) | BV(20) | BV(21) /* UART3 */

@@ -83,15 +83,42 @@ is they're all crystal, power, or reset — none are GPIO.*
 - **Pos 6** = GND
 - **Pos 13** = VDD (target voltage reference)
 
-### UART3 — Debug serial (currently used by firmware at 115200 baud)
+### UART3 — Debug serial (921600 baud, 8N1)
 - **Pos 4** = P0.26/RXD3 (receive)
 - **Pos 12** = P0.25/TXD3 (transmit)
-- Available for monitoring firmware debug output
+- Bootloader briefly uses 115200 (hardcoded divisor), then main firmware reinits at 921600
+- Source: `src/config-mk3` line 66: `CONFIG_UART_BAUDRATE = 921600`
+- Available for monitoring firmware debug output (see boot messages below)
 
 ### Power
 - **Pos 6** = GND
+- **Pos 7** = VDD (3.3V) — square pad, confirmed 3.28V
 - **Pos 13** = VDD (3.3V)
-- **Pos 7** = Likely VDD (3.3V) — square pad, needs voltage verification
+
+## UART3 Boot Messages
+
+On power-on, the firmware prints to UART3 (pos 12) at **921600 baud, 8N1**:
+
+```
+?                          ← bootloader init (briefly at 115200, then reinit to 921600)
+
+sd2snes Mk.III             ← main firmware banner
+===============
+fw ver.: 1.11.1
+cpu clock: 96000000 Hz
+PCONP=<hex>
+(                          ← menu ROM load start
+)                          ← menu ROM load complete
+RTC valid!                 ← (or "RTC invalid!")
+SNES GO!                   ← handoff to SNES
+test sram
+ok
+```
+
+Source files: `src/main.c` (banner, ROM load, RTC, SNES GO), `src/bootldr/uart.c` (`?`),
+`src/fpga.c` (FPGA config progress if needed: `P`, `p`, `C`, `c`).
+
+Additional output appears during file browser navigation (directory reads) and game loading.
 
 ## ⚠️ Warning: Position 14 = HWREV0
 
