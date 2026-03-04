@@ -1,0 +1,550 @@
+; registers.i65 - SNES PPU & CPU register addresses and bit constants
+;
+; Named constants for hardware registers, replacing magic numbers.
+; Source: Nintendo SNES Development Manual, Book I
+;
+; Usage:
+;   lda #INIDISP_FULL_BRIGHT     ; instead of lda #$0f
+;   sta INIDISP                  ; instead of sta $2100
+;
+;   lda #TM_OBJ | TM_BG1 | TM_BG2
+;   sta TM                       ; instead of lda #$13 : sta $212c
+
+; =============================================================
+; PPU Display Control ($2100-$2106)
+; =============================================================
+
+INIDISP   = $2100   ; Display control: force blank + brightness
+
+; INIDISP bit layout: F---BBBB
+;   F    = Force blank (1=screen off, 0=screen on)
+;   BBBB = Brightness (0-15)
+INIDISP_FORCE_BLANK  = $80   ; bit 7: screen off, VRAM/OAM/CGRAM accessible
+INIDISP_FULL_BRIGHT  = $0F   ; brightness 15 (max)
+INIDISP_BLANK_BRIGHT = $8F   ; force blank + max brightness (common init value)
+
+OBSEL     = $2101   ; OBJ size/name/base select
+
+; OBSEL bit layout: SSSNNBBB
+;   SSS = OBJ size select (which two sizes available)
+;   NN  = Name select (4K-word offset for name bit 8)
+;   BBB = Name base address (8K-word VRAM segment)
+OBSEL_SIZE_8x8_16x16   = $00  ; SSS=000
+OBSEL_SIZE_8x8_32x32   = $20  ; SSS=001
+OBSEL_SIZE_8x8_64x64   = $40  ; SSS=010
+OBSEL_SIZE_16x16_32x32 = $60  ; SSS=011
+OBSEL_SIZE_16x16_64x64 = $80  ; SSS=100
+OBSEL_SIZE_32x32_64x64 = $A0  ; SSS=101
+OBSEL_NAME_0            = $00  ; NN=00
+OBSEL_NAME_1            = $08  ; NN=01
+OBSEL_NAME_2            = $10  ; NN=10
+OBSEL_NAME_3            = $18  ; NN=11
+OBSEL_BASE_0000         = $00  ; BBB=000 → VRAM $0000
+OBSEL_BASE_2000         = $01  ; BBB=001 → VRAM $2000
+OBSEL_BASE_4000         = $02  ; BBB=010 → VRAM $4000
+OBSEL_BASE_6000         = $03  ; BBB=011 → VRAM $6000
+
+OAMADDL   = $2102   ; OAM address (low byte)
+OAMADDH   = $2103   ; OAM address (high byte), D7=priority rotation
+OAMDATA   = $2104   ; OAM data write (write-sequential)
+
+; OAMADDH bit 7
+OAMADDH_PRIORITY_ROTATION = $80  ; enable OBJ priority rotation
+
+BGMODE    = $2105   ; BG mode and character size
+
+; BGMODE bit layout: 4321PMMM
+;   4321 = BG4-BG1 character size (0=8x8, 1=16x16)
+;   P    = BG3 priority (Mode 1 only)
+;   MMM  = BG mode (0-7)
+BGMODE_MODE0          = $00
+BGMODE_MODE1          = $01
+BGMODE_MODE2          = $02
+BGMODE_MODE3          = $03
+BGMODE_MODE4          = $04
+BGMODE_MODE5          = $05
+BGMODE_MODE6          = $06
+BGMODE_MODE7          = $07
+BGMODE_BG3_PRIORITY   = $08  ; Mode 1: BG3 tiles above all others
+BGMODE_BG1_16x16      = $10
+BGMODE_BG2_16x16      = $20
+BGMODE_BG3_16x16      = $40
+BGMODE_BG4_16x16      = $80
+
+MOSAIC    = $2106   ; Mosaic size and enable
+
+; MOSAIC bit layout: SSSS4321
+;   SSSS = Mosaic size - 1 (0=1px, F=16px)
+;   4321 = BG4-BG1 mosaic enable
+MOSAIC_BG1  = $01
+MOSAIC_BG2  = $02
+MOSAIC_BG3  = $04
+MOSAIC_BG4  = $08
+
+; =============================================================
+; BG Tilemap / Character Addresses ($2107-$210C)
+; =============================================================
+
+BG1SC     = $2107   ; BG1 tilemap address and size
+BG2SC     = $2108   ; BG2 tilemap address and size
+BG3SC     = $2109   ; BG3 tilemap address and size
+BG4SC     = $210A   ; BG4 tilemap address and size
+
+; BGxSC bit layout: AAAAAASS
+;   AAAAAA = Tilemap VRAM address (1K-word units, shifted left 2)
+;   SS     = Tilemap size
+SC_32x32  = $00   ; 1 screen
+SC_64x32  = $01   ; 2 screens horizontal
+SC_32x64  = $02   ; 2 screens vertical
+SC_64x64  = $03   ; 4 screens
+
+BG12NBA   = $210B   ; BG1/BG2 character base address
+BG34NBA   = $210C   ; BG3/BG4 character base address
+
+; BGxxNBA: high nibble = BG2/BG4, low nibble = BG1/BG3
+; Each nibble is 4K-word units (multiply by $1000 for VRAM address)
+
+; =============================================================
+; BG Scroll ($210D-$2114) — write-twice: low then high
+; =============================================================
+
+BG1HOFS   = $210D   ; BG1 horizontal scroll
+BG1VOFS   = $210E   ; BG1 vertical scroll
+BG2HOFS   = $210F   ; BG2 horizontal scroll
+BG2VOFS   = $2110   ; BG2 vertical scroll
+BG3HOFS   = $2111   ; BG3 horizontal scroll
+BG3VOFS   = $2112   ; BG3 vertical scroll
+BG4HOFS   = $2113   ; BG4 horizontal scroll
+BG4VOFS   = $2114   ; BG4 vertical scroll
+
+; =============================================================
+; VRAM Access ($2115-$2119)
+; =============================================================
+
+VMAIN     = $2115   ; VRAM address increment mode
+
+; VMAIN bit layout: H---GGII
+;   H  = Increment select (0=after $2118/$2139, 1=after $2119/$213A)
+;   GG = Full graphic (address remapping for bitplane interleave)
+;   II = Increment step
+VMAIN_INCREMENT_LOW   = $00  ; increment after low byte write ($2118)
+VMAIN_INCREMENT_HIGH  = $80  ; increment after high byte write ($2119)
+VMAIN_STEP_1          = $00  ; II=00: +1 word
+VMAIN_STEP_32         = $01  ; II=01: +32 words
+VMAIN_STEP_128        = $02  ; II=10: +128 words
+VMAIN_FULLGRAPHIC_NONE = $00 ; GG=00: no remapping
+VMAIN_FULLGRAPHIC_2BPP = $04 ; GG=01: 8-bit shift (2bpp tiles)
+VMAIN_FULLGRAPHIC_4BPP = $08 ; GG=10: 9-bit shift (4bpp tiles)
+VMAIN_FULLGRAPHIC_8BPP = $0C ; GG=11: 10-bit shift (8bpp tiles)
+
+; Common composite: increment high byte, +1 word (standard VRAM write)
+VMAIN_WORD_ACCESS     = $80  ; = VMAIN_INCREMENT_HIGH | VMAIN_STEP_1
+
+VMADDL    = $2116   ; VRAM word address (low)
+VMADDH    = $2117   ; VRAM word address (high)
+VMDATAL   = $2118   ; VRAM data write (low)
+VMDATAH   = $2119   ; VRAM data write (high)
+
+; =============================================================
+; Mode 7 ($211A-$2120)
+; =============================================================
+
+M7SEL     = $211A   ; Mode 7 settings
+
+; M7SEL bit layout: OO----VH
+;   OO = Screen over (00=wrap, 10=transparent, 11=tile 0 fill)
+;   V  = Vertical flip
+;   H  = Horizontal flip
+M7SEL_HFLIP         = $01
+M7SEL_VFLIP         = $02
+M7SEL_OVER_WRAP     = $00  ; wrap around
+M7SEL_OVER_TRANS    = $80  ; transparent outside
+M7SEL_OVER_TILE0    = $C0  ; tile 0 fill outside
+
+M7A       = $211B   ; Matrix A (cosine), also hardware multiply input
+M7B       = $211C   ; Matrix B (sine), also hardware multiply input
+M7C       = $211D   ; Matrix C (-sine)
+M7D       = $211E   ; Matrix D (cosine)
+M7X       = $211F   ; Center X (13-bit signed)
+M7Y       = $2120   ; Center Y (13-bit signed)
+
+; =============================================================
+; CGRAM / Palette ($2121-$2122)
+; =============================================================
+
+CGADD     = $2121   ; CGRAM word address (color 0-255)
+CGDATA    = $2122   ; CGRAM data write (BGR555, low then high)
+
+; OBJ palettes start at CGRAM address 128
+CGADD_OBJ_PAL0 = $80   ; OBJ palette 0 (colors 128-143)
+CGADD_OBJ_PAL1 = $90   ; OBJ palette 1 (colors 144-159)
+CGADD_OBJ_PAL2 = $A0   ; OBJ palette 2 (colors 160-175)
+CGADD_OBJ_PAL3 = $B0   ; OBJ palette 3 (colors 176-191)
+CGADD_OBJ_PAL4 = $C0   ; OBJ palette 4 (colors 192-207) — color math eligible
+CGADD_OBJ_PAL5 = $D0   ; OBJ palette 5 (colors 208-223) — color math eligible
+CGADD_OBJ_PAL6 = $E0   ; OBJ palette 6 (colors 224-239) — color math eligible
+CGADD_OBJ_PAL7 = $F0   ; OBJ palette 7 (colors 240-255) — color math eligible
+
+; =============================================================
+; Window Mask ($2123-$212B)
+; =============================================================
+
+W12SEL    = $2123   ; Window 1/2 settings for BG1/BG2
+W34SEL    = $2124   ; Window 1/2 settings for BG3/BG4
+WOBJSEL   = $2125   ; Window 1/2 settings for OBJ and Color math
+
+; W12SEL bit layout: EIEIeiei
+;   BG2: W2 Enable(D7), W2 Invert(D6), W1 Enable(D5), W1 Invert(D4)
+;   BG1: W2 Enable(D3), W2 Invert(D2), W1 Enable(D1), W1 Invert(D0)
+; W34SEL: same layout for BG4 (high nibble) / BG3 (low nibble)
+; WOBJSEL: same layout for Color math (high nibble) / OBJ (low nibble)
+;
+; Enable = 1 means window is active for that layer
+; Invert = 1 means area INSIDE window is masked (reversed logic)
+
+; Per-layer window bits (use with W12SEL for BG1, shift left 4 for BG2)
+WSEL_W1_ENABLE  = $02   ; enable Window 1
+WSEL_W1_INVERT  = $01   ; invert Window 1 (mask inside instead of outside)
+WSEL_W2_ENABLE  = $08   ; enable Window 2
+WSEL_W2_INVERT  = $04   ; invert Window 2
+
+WH0       = $2126   ; Window 1 left position
+WH1       = $2127   ; Window 1 right position
+WH2       = $2128   ; Window 2 left position
+WH3       = $2129   ; Window 2 right position
+WBGLOG    = $212A   ; Window logic for BG1-BG4
+WOBJLOG   = $212B   ; Window logic for OBJ and Color math
+
+; Window logic ops (2 bits per layer in WBGLOG/WOBJLOG)
+; WBGLOG: BG4(D7-D6), BG3(D5-D4), BG2(D3-D2), BG1(D1-D0)
+; WOBJLOG: Color(D3-D2), OBJ(D1-D0)
+WLOG_OR   = $00
+WLOG_AND  = $01
+WLOG_XOR  = $02
+WLOG_XNOR = $03
+
+; =============================================================
+; Screen Designation ($212C-$212F)
+; =============================================================
+
+TM        = $212C   ; Main screen layer enable
+TS        = $212D   ; Sub screen layer enable
+TMW       = $212E   ; Window mask for main screen
+TSW       = $212F   ; Window mask for sub screen
+
+; Layer enable bits (shared by TM, TS, TMW, TSW)
+TM_BG1    = $01
+TM_BG2    = $02
+TM_BG3    = $04
+TM_BG4    = $08
+TM_OBJ    = $10
+
+; =============================================================
+; Color Math ($2130-$2132)
+; =============================================================
+
+CGWSEL    = $2130   ; Color math control
+
+; CGWSEL bit layout: CCPP--D-
+;   CC = Clip colors to black (00=never, 01=outside, 10=inside, 11=always)
+;   PP = Prevent color math  (00=never, 01=outside, 10=inside, 11=always)
+;   D  = Direct color mode (Mode 3/4/7 only)
+CGWSEL_CLIP_NEVER     = $00
+CGWSEL_CLIP_OUTSIDE   = $40
+CGWSEL_CLIP_INSIDE    = $80
+CGWSEL_CLIP_ALWAYS    = $C0
+CGWSEL_PREVENT_NEVER  = $00
+CGWSEL_PREVENT_OUTSIDE = $10
+CGWSEL_PREVENT_INSIDE = $20
+CGWSEL_PREVENT_ALWAYS = $30
+CGWSEL_DIRECT_COLOR   = $01
+
+CGADSUB   = $2131   ; Color math mode and layer selection
+
+; CGADSUB bit layout: SHBO4321
+;   S    = 0=add, 1=subtract
+;   H    = Half result (average)
+;   B    = Backdrop
+;   O    = OBJ (palettes 4-7 only)
+;   4321 = BG4-BG1
+CGADSUB_ADD       = $00
+CGADSUB_SUB       = $80
+CGADSUB_HALF      = $40
+CGADSUB_BACKDROP  = $20
+CGADSUB_OBJ       = $10
+CGADSUB_BG4       = $08
+CGADSUB_BG3       = $04
+CGADSUB_BG2       = $02
+CGADSUB_BG1       = $01
+
+COLDATA   = $2132   ; Fixed color for color math
+
+; COLDATA bit layout: BGRIIIIII
+;   B = Blue plane select
+;   G = Green plane select
+;   R = Red plane select
+;   IIIII = Intensity (0-31)
+COLDATA_RED       = $20   ; select red plane
+COLDATA_GREEN     = $40   ; select green plane
+COLDATA_BLUE      = $80   ; select blue plane
+COLDATA_ALL       = $E0   ; select all planes
+
+; =============================================================
+; Display Settings ($2133)
+; =============================================================
+
+SETINI    = $2133   ; Screen mode settings
+
+; SETINI bit layout: E-S-POIV
+;   E = EXTBG (external BG, Mode 7 only)
+;   S = Pseudo-hires (Mode 5/6 style transparency)
+;   P = Overscan (0=224 lines, 1=239 lines)
+;   O = OBJ interlace (double-height sprites)
+;   I = Screen interlace
+;   V = (bit 0, unused)
+SETINI_INTERLACE      = $01
+SETINI_OBJ_INTERLACE  = $02
+SETINI_OVERSCAN       = $04   ; 239 visible lines (PAL)
+SETINI_PSEUDO_HIRES   = $08
+SETINI_EXTBG          = $40   ; Mode 7 EXTBG
+
+; =============================================================
+; Mode 7 Multiply Result (read-only, $2134-$2136)
+; =============================================================
+
+; After writing M7A ($211B) and M7B ($211C), the signed
+; multiplication result is available here (24-bit, 3 reads).
+; Also used for general-purpose signed 16x8 multiply.
+MPYL      = $2134   ; Multiply result (low byte)
+MPYM      = $2135   ; Multiply result (mid byte)
+MPYH      = $2136   ; Multiply result (high byte)
+
+; =============================================================
+; PPU Data Read-Back (read-only, $2138-$213A)
+; =============================================================
+
+OAMDATAREAD = $2138  ; OAM data read (set address via $2102 first)
+VMDATALREAD = $2139  ; VRAM data read (low byte)
+VMDATAHREAD = $213A  ; VRAM data read (high byte)
+
+; =============================================================
+; CGRAM Read-Back (read-only, $213B)
+; =============================================================
+
+CGDATAREAD  = $213B  ; CGRAM data read (BGR555, low then high)
+
+; =============================================================
+; H/V Counter Latch ($2137, $213C-$213D)
+; =============================================================
+
+SLHV      = $2137   ; Software latch H/V counter (read to latch)
+OPHCT     = $213C   ; Latched H counter (read-twice: low then high bit)
+OPVCT     = $213D   ; Latched V counter (read-twice: low then high bit)
+
+; =============================================================
+; PPU Status (read-only, $213E-$213F)
+; =============================================================
+
+STAT77    = $213E   ; PPU1 status
+STAT78    = $213F   ; PPU2 status
+
+; STAT77 bits
+STAT77_TIME_OVER  = $80   ; 35+ tiles on a scanline (sprites dropped)
+STAT77_RANGE_OVER = $40   ; 33+ sprites on a scanline (sprites dropped)
+
+; =============================================================
+; Old-Style Joypad ($4016-$4017)
+; =============================================================
+
+; Manual joypad read (active when auto-read is disabled).
+; Write 1 then 0 to $4016 to latch, then read bits serially.
+JOYSER0   = $4016   ; Joypad serial data (port 1) / strobe (write)
+JOYSER1   = $4017   ; Joypad serial data (port 2)
+
+; =============================================================
+; CPU / System Control ($4200-$420D)
+; =============================================================
+
+NMITIMEN  = $4200   ; NMI, IRQ, and auto joypad enable
+
+; NMITIMEN bit layout: N-VH---J
+;   N  = NMI enable (on V-Blank)
+;   VH = IRQ mode (00=off, 01=H, 10=V, 11=H+V)
+;   J  = Auto joypad read enable
+NMITIMEN_NMI       = $80   ; enable V-Blank NMI
+NMITIMEN_IRQ_H     = $10   ; H-count IRQ
+NMITIMEN_IRQ_V     = $20   ; V-count IRQ
+NMITIMEN_IRQ_HV    = $30   ; H+V-count IRQ
+NMITIMEN_AUTOJOY   = $01   ; auto joypad read
+NMITIMEN_NMI_JOY   = $81   ; NMI + auto joypad (common combo)
+
+WRIO      = $4201   ; Programmable I/O port (active-low)
+WRMPYA    = $4202   ; Unsigned multiply: multiplicand A
+WRMPYB    = $4203   ; Unsigned multiply: multiplier B (triggers calc)
+WRDIVL    = $4204   ; Unsigned divide: dividend low
+WRDIVH    = $4205   ; Unsigned divide: dividend high
+WRDIVB    = $4206   ; Unsigned divide: divisor (triggers calc)
+
+HTIMEL    = $4207   ; H-count IRQ position (low)
+HTIMEH    = $4208   ; H-count IRQ position (high)
+VTIMEL    = $4209   ; V-count IRQ position (low)
+VTIMEH    = $420A   ; V-count IRQ position (high)
+
+MDMAEN    = $420B   ; DMA channel enable (write-triggered)
+HDMAEN    = $420C   ; HDMA channel enable
+MEMSEL    = $420D   ; ROM access speed (0=SlowROM, 1=FastROM)
+
+; DMA/HDMA channel enable bits (shared by MDMAEN, HDMAEN)
+DMA_CH0   = $01
+DMA_CH1   = $02
+DMA_CH2   = $04
+DMA_CH3   = $08
+DMA_CH4   = $10
+DMA_CH5   = $20
+DMA_CH6   = $40
+DMA_CH7   = $80
+
+; =============================================================
+; CPU Status (read-only, $4210-$4217)
+; =============================================================
+
+RDNMI     = $4210   ; NMI flag (read to acknowledge)
+TIMEUP    = $4211   ; IRQ flag (read to acknowledge)
+HVBJOY    = $4212   ; H/V blank flags and joypad busy
+RDIO      = $4213   ; Programmable I/O port read
+RDDIVL    = $4214   ; Division result (quotient, low)
+RDDIVH    = $4215   ; Division result (quotient, high)
+RDMPYL    = $4216   ; Multiply result (low) / Division remainder (low)
+RDMPYH    = $4217   ; Multiply result (high) / Division remainder (high)
+
+; HVBJOY bits
+HVBJOY_VBLANK   = $80   ; in V-Blank
+HVBJOY_HBLANK   = $40   ; in H-Blank
+HVBJOY_AUTOJOY  = $01   ; auto joypad read in progress
+
+; =============================================================
+; Joypad Registers (read-only, $4218-$421F)
+; =============================================================
+
+JOY1L     = $4218   ; Joypad 1 (low byte)
+JOY1H     = $4219   ; Joypad 1 (high byte)
+JOY2L     = $421A   ; Joypad 2 (low byte)
+JOY2H     = $421B   ; Joypad 2 (high byte)
+JOY3L     = $421C   ; Joypad 3 (low byte)
+JOY3H     = $421D   ; Joypad 3 (high byte)
+JOY4L     = $421E   ; Joypad 4 (low byte)
+JOY4H     = $421F   ; Joypad 4 (high byte)
+
+; Joypad button bits (16-bit read from $4218/$4219)
+JOY_B      = $8000
+JOY_Y      = $4000
+JOY_SELECT = $2000
+JOY_START  = $1000
+JOY_UP     = $0800
+JOY_DOWN   = $0400
+JOY_LEFT   = $0200
+JOY_RIGHT  = $0100
+JOY_A      = $0080
+JOY_X      = $0040
+JOY_L      = $0020
+JOY_R      = $0010
+
+; =============================================================
+; DMA Channel Registers ($4300-$437A)
+; Base = $4300 + (channel * $10)
+; =============================================================
+
+; Offsets from channel base
+DMAP      = $00   ; DMA/HDMA parameters
+BBAD      = $01   ; B-bus address (PPU register low byte)
+A1TL      = $02   ; A-bus address (low)
+A1TH      = $03   ; A-bus address (high)
+A1TB      = $04   ; A-bus address (bank)
+DASL      = $05   ; Byte count low (DMA) / Indirect addr low (HDMA)
+DASH      = $06   ; Byte count high (DMA) / Indirect addr high (HDMA)
+DASB      = $07   ; Indirect HDMA bank
+
+; Channel base addresses
+DMA0_BASE = $4300
+DMA1_BASE = $4310
+DMA2_BASE = $4320
+DMA3_BASE = $4330
+DMA4_BASE = $4340
+DMA5_BASE = $4350
+DMA6_BASE = $4360
+DMA7_BASE = $4370
+
+; DMAP bit layout: DA--MTTT
+;   D   = Direction (0=A→B CPU→PPU, 1=B→A PPU→CPU)
+;   A   = HDMA addressing (0=absolute, 1=indirect)
+;   M   = HDMA address mode (0=table, 1=fixed?)  [unused for GPDMA]
+;   TTT = Transfer mode
+DMAP_DIR_AB       = $00   ; A-bus → B-bus (CPU → PPU) [write to PPU]
+DMAP_DIR_BA       = $80   ; B-bus → A-bus (PPU → CPU) [read from PPU]
+DMAP_HDMA_INDIRECT = $40  ; HDMA: use indirect addressing
+
+; Transfer modes (TTT)
+DMAP_1REG         = $00   ; mode 0: 1 byte  → p
+DMAP_2REG         = $01   ; mode 1: 2 bytes → p, p+1
+DMAP_1REG_2X      = $02   ; mode 2: 2 bytes → p, p      (write same reg twice)
+DMAP_2REG_2X      = $03   ; mode 3: 4 bytes → p, p, p+1, p+1
+DMAP_4REG         = $04   ; mode 4: 4 bytes → p, p+1, p+2, p+3
+
+; Common B-bus targets (PPU register low byte for BBAD)
+BBAD_VRAM         = $18   ; VMDATAL ($2118) — use with DMAP_2REG for word writes
+BBAD_OAM          = $04   ; OAMDATA ($2104)
+BBAD_CGRAM        = $22   ; CGDATA ($2122)
+
+; =============================================================
+; WRAM Port ($2180-$2183)
+; =============================================================
+
+WMDATA    = $2180   ; WRAM data read/write (auto-increment)
+WMADDL    = $2181   ; WRAM address (low)
+WMADDM    = $2182   ; WRAM address (mid)
+WMADDH    = $2183   ; WRAM address (high, bit 0 only — bank 0 or 1)
+
+; =============================================================
+; OAM Attribute Byte Constants (byte 3 of low table entry)
+; =============================================================
+
+; OAM byte 3 layout: VHPPCCCn
+;   V   = V-flip
+;   H   = H-flip
+;   PP  = Priority vs BG (0=lowest, 3=highest)
+;   CCC = Palette (0-7)
+;   n   = Name table (0=base, 1=base+select)
+OAM_VFLIP     = $80
+OAM_HFLIP     = $40
+OAM_PRIO_0    = $00   ; lowest priority (behind all BGs)
+OAM_PRIO_1    = $10   ; behind BG1, above BG2
+OAM_PRIO_2    = $20   ; above BG1 and BG2
+OAM_PRIO_3    = $30   ; highest priority (in front of all)
+OAM_PAL_0     = $00
+OAM_PAL_1     = $02
+OAM_PAL_2     = $04
+OAM_PAL_3     = $06
+OAM_PAL_4     = $08   ; color math eligible
+OAM_PAL_5     = $0A   ; color math eligible
+OAM_PAL_6     = $0C   ; color math eligible
+OAM_PAL_7     = $0E   ; color math eligible
+OAM_NAME_HIGH = $01   ; name bit 8 = 1 (select area)
+
+; =============================================================
+; Processor Mode Shorthand
+; =============================================================
+
+; 65816 SEP/REP operand bits — for clarity in mode switches
+;   sep #P_M       ; .as   (8-bit accumulator)
+;   rep #P_M       ; .al   (16-bit accumulator)
+;   sep #P_X       ; .xs   (8-bit index)
+;   rep #P_X       ; .xl   (16-bit index)
+;   sep #P_M | P_X ; .as .xs (8-bit A + 8-bit X/Y)
+P_C = $01   ; Carry
+P_Z = $02   ; Zero
+P_I = $04   ; IRQ disable
+P_D = $08   ; Decimal mode
+P_X = $10   ; Index register size (1=8-bit)
+P_M = $20   ; Accumulator size (1=8-bit)
+P_V = $40   ; Overflow
+P_N = $80   ; Negative

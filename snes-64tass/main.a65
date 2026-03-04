@@ -9,6 +9,7 @@
 .include "dma.i65"
 .include "stack.i65"
 .include "data.i65"
+.include "registers.i65"
 .include "macros.i65"
 
 ; =============================================
