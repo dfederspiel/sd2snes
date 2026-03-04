@@ -116,18 +116,7 @@ _sysinfo_printloop
   adc #$00
   sta snes_system_config, x
 
-  lda #<(snes_system_config >> 16) ; System text
-  ldx #snes_system_config & $ffff
-  sta print_bank
-  stx print_src
-  stz print_pal
-  lda #39
-  sta print_count
-  lda #23
-  sta print_y
-  lda #12
-  sta print_x
-  jsr hiprint
+  PrintAt 12, 23, snes_system_config, 0, 39
 
 - lda isr_done
   lsr a

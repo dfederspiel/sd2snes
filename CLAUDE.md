@@ -21,7 +21,7 @@ The MCU firmware (`src/`) is also buildable — see "MCU Firmware Build" section
 
 ### Build Command
 ```bash
-wsl -e bash -c "cd /mnt/c/Users/david/code/sd2snes/.claude/worktrees/vigorous-vaughan/snes && make"
+cd ~/code/sd2snes/snes && make
 ```
 
 ### Build Output
@@ -57,7 +57,7 @@ wsl -e bash -c "cd /mnt/c/Users/david/code/sd2snes/.claude/worktrees/vigorous-va
 
 ### Edit-Build-Test Loop (~15 seconds)
 1. Edit `.a65` files in VS Code
-2. Build: run the WSL make command above
+2. Build: `cd ~/code/sd2snes/snes && make`
 3. Load `menu.bin` in bsnes-accuracy (File > Load Cartridge, or restart)
 
 ## MCU Firmware Build
@@ -71,7 +71,7 @@ The ARM MCU firmware can be built from source for the FXPAK Pro (Mk.III).
 
 ### Build Command
 ```bash
-wsl -e bash -c "cd /mnt/c/Users/david/code/sd2snes/src && make CONFIG=config-mk3"
+cd ~/code/sd2snes/src && make CONFIG=config-mk3
 ```
 
 ### Build Output

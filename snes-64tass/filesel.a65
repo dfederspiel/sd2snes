@@ -1093,17 +1093,7 @@ _setup_224_adjsel
   sta $2133
   lda #$01
   sta filesel_dirty
-  lda #space64 >> 16
-  ldx #space64 & $ffff
-  sta print_bank
-  stx print_src
-  stz print_pal
-  lda #64
-  sta print_count
-  lda #27
-  sta print_y
-  stz print_x
-  jsr hiprint
+  PrintAt 0, 27, space64, 0, 64
   lda #28
   sta print_y
   jsr hiprint

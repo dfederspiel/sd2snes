@@ -118,6 +118,7 @@ verilog/*/xst/
 verilog/*/xlnx_auto_0_xdb/
 .project
 .cproject
+.vscode/
 snes/.settings/org.eclipse.cdt.core.prefs
 snes/.settings/org.eclipse.linuxtools.tools.launch.core.prefs
 cic/supercic/supercic-key.hex
@@ -135,6 +136,7 @@ utils/palreorder
 release
 src/obj-mk2
 src/obj-mk3
+src/.ARG_VERSION
 verilog/*/output_files
 verilog/*/simulation
 verilog/*/smartxplorer

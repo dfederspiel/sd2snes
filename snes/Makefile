@@ -12,7 +12,7 @@ MAP = $(IPS:.ips=.map) $(O65:.o65=.map)
 DEPDIR := .dep
 GENDEPFLAGS = -MM -MP -MF $(DEPDIR)/$(@F).d -MT $(@F)
 
-all: $(OUT) $(MAP)
+all: $(OUT)
 
 smc: menu.bin
 	cat menu.bin sd2snes.rom > menu.smc

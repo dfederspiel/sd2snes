@@ -1,4 +1,4 @@
-; data.i65 - WRAM variable address constants for 64tass
+; data.i65 - WRAM variable definitions for 64tass
 ;
 ; All variables live in WRAM (bank $7E). We use 16-bit addresses
 ; because all variables are in the $0000-$02FF range, which is
@@ -12,84 +12,139 @@
 ; which also hits the WRAM mirror. So 16-bit addresses Just Work.
 ;
 ; For DMA to/from WRAM above $1FFF (tile buffers), use $7E0000+addr.
+;
+; Each region uses .virtual at its current start address.
+; The assembler tracks offsets within each block automatically.
+; Boundary assertions at the bottom catch region overflows.
 
 ; =============================================
-; Print system ($0000-$001F)
+; Print system ($0000)
 ; =============================================
-print_x     = $0000   ; .word - x coordinate (tile column)
-print_y     = $0002   ; .word - y coordinate (tile row)
-print_src   = $0004   ; .word - source string address (16-bit)
-print_bank  = $0006   ; .byte - source string bank
-print_pal   = $0007   ; .word - palette number for text
-print_temp  = $0009   ; .word - work variable
-print_ptr   = $000B   ; 3 bytes - read pointer (long)
-print_count = $000E   ; .word - max chars to print
-print_done  = $0010   ; .word - chars actually printed
-print_over  = $0012   ; .byte - was string truncated?
+.virtual $0000
+print_x     .word ?   ; x coordinate (tile column)
+print_y     .word ?   ; y coordinate (tile row)
+print_src   .word ?   ; source string address (16-bit)
+print_bank  .byte ?   ; source string bank
+print_pal   .word ?   ; palette number for text
+print_temp  .word ?   ; work variable
+print_ptr   .fill 3   ; read pointer (long)
+print_count .word ?   ; max chars to print
+print_done  .word ?   ; chars actually printed
+print_over  .byte ?   ; was string truncated?
+_print_end:
+.endvirtual
 
 ; =============================================
-; State flags ($0020-$002F)
+; Menu show_menu locals ($0013)
+; Saved/restored for recursion. Sits in gap between print and state.
 ; =============================================
-isr_done           = $0020  ; .byte - NMI completion flag
-bar_xl             = $0021  ; .byte - logical X of select bar
-bar_yl             = $0022  ; .byte - logical Y of select bar
-bar_x              = $0023  ; .byte - pixel X of select bar
-bar_y              = $0024  ; .byte - pixel Y of select bar
-bar_w              = $0025  ; .byte - bar width (pixels)
-bar_wl             = $0026  ; .byte - bar width (logical)
-screen_dma_disable = $0027  ; .word - skip tile DMA when nonzero
+.virtual $0013
+sm_numentries  .byte ?   ; number of entries in current menu
+sm_max_lbl_len .byte ?   ; max label width
+sm_max_opt_len .byte ?   ; max option value width
+sm_title_len   .byte ?   ; window title length
+_sm_locals_end:
+.endvirtual
 
 ; =============================================
-; Brightness ($0030-$003F)
+; State flags ($0020)
 ; =============================================
-tgt_bright   = $0030  ; .byte - target brightness (NMI fades toward)
-cur_bright   = $0031  ; .byte - current brightness
-bright_limit = $0032  ; .byte - max brightness from config
-fade_speed   = $0033  ; .byte - frames between fade steps
-fade_count   = $0034  ; .byte - current fade frame counter
+.virtual $0020
+isr_done           .byte ?   ; NMI completion flag
+bar_xl             .byte ?   ; logical X of select bar
+bar_yl             .byte ?   ; logical Y of select bar
+bar_x              .byte ?   ; pixel X of select bar
+bar_y              .byte ?   ; pixel Y of select bar
+bar_w              .byte ?   ; bar width (pixels)
+bar_wl             .byte ?   ; bar width (logical)
+screen_dma_disable .byte ?   ; skip tile DMA when nonzero (byte; +1 zeroed by init only)
+_state_end:
+.endvirtual
 
 ; =============================================
-; Joypad ($0040-$0057)
+; Menu edit value vars ($0028)
 ; =============================================
-pad1mem    = $0040  ; .word - joypad current state
-pad1trig   = $0042  ; .word - joypad edge detection (newly pressed)
-pad1delay  = $0044  ; .word - key repeat delay counter
-pad_b      = $0046  ; .byte - B button (edge-triggered)
-pad_y      = $0047  ; .byte - Y button
-pad_select = $0048  ; .byte - Select button
-pad_start  = $0049  ; .byte - Start button
-pad_up     = $004A  ; .byte - D-pad up
-pad_down   = $004B  ; .byte - D-pad down
-pad_left   = $004C  ; .byte - D-pad left
-pad_right  = $004D  ; .byte - D-pad right
-pad_a      = $004E  ; .byte - A button
-pad_x      = $004F  ; .byte - X button
-pad_l      = $0050  ; .byte - L shoulder
-pad_r      = $0051  ; .byte - R shoulder
+.virtual $0028
+mev_work_value  .word ?   ; edit dialog current value
+mev_value_len   .byte ?   ; edit dialog value display length
+mev_text_grey   .byte ?   ; edit dialog greyed out flag
+mev_chgfunc_ptr .fill 3   ; change hook function pointer (addr-1)
+_mev_end:
+.endvirtual
 
 ; =============================================
-; Animation state ($0058-$006F)
+; Brightness ($0030)
 ; =============================================
-anim_frame   = $0058  ; .byte - interpolation progress (0-127)
-anim_speed   = $0059  ; .byte - frames to skip between updates
-anim_timer   = $005A  ; .byte - frame skip counter
-anim_phase   = $005B  ; .byte - current palette transition (0-2)
-anim_src_idx = $005C  ; .word - ROM offset of "from" palette
-anim_dst_idx = $005E  ; .word - ROM offset of "to" palette
-anim_src_ptr = $0060  ; 3 bytes - long pointer to src palette in ROM
-anim_dst_ptr = $0063  ; 3 bytes - long pointer to dst palette in ROM
-anim_temp    = $0066  ; 4 bytes - temp workspace for interpolation
-staging_ptr  = $006A  ; 2 bytes - pointer to inactive hdma_pal buffer
-hdma_pal_flip = $006C ; .byte - 0: HDMA reads A, write B; 1: HDMA reads B, write A
+.virtual $0030
+tgt_bright   .byte ?   ; target brightness (NMI fades toward)
+cur_bright   .byte ?   ; current brightness
+bright_limit .byte ?   ; max brightness from config
+fade_speed   .byte ?   ; frames between fade steps
+fade_count   .byte ?   ; current fade frame counter
+_bright_end:
+.endvirtual
 
 ; =============================================
-; Ball sprite state ($0070-$007F)
+; Menu print_opt_string / shared vars ($0035)
 ; =============================================
-ball_x     = $0070  ; .byte - X position (pixels)
-ball_y     = $0071  ; .byte - Y position (pixels)
-ball_vx    = $0072  ; .byte - X velocity (signed, pixels/frame)
-ball_vy    = $0073  ; .byte - Y velocity (signed, pixels/frame)
-bounce_wall = $0074 ; .byte - which wall was hit (0=none, 1-4=wall)
+.virtual $0035
+mev_label_addr  .word ?   ; kv8 dialog label address
+mpos_kvpar_data .word ?   ; current kv value
+mpos_kvtab_ptr  .fill 3   ; kv table pointer
+_mpos_end:
+.endvirtual
+
+; =============================================
+; Joypad ($0040)
+; =============================================
+.virtual $0040
+pad1mem    .word ?   ; joypad current state
+pad1trig   .word ?   ; joypad edge detection (newly pressed)
+pad1delay  .word ?   ; key repeat delay counter
+pad_b      .byte ?   ; B button (edge-triggered)
+pad_y      .byte ?   ; Y button
+pad_select .byte ?   ; Select button
+pad_start  .byte ?   ; Start button
+pad_up     .byte ?   ; D-pad up
+pad_down   .byte ?   ; D-pad down
+pad_left   .byte ?   ; D-pad left
+pad_right  .byte ?   ; D-pad right
+pad_a      .byte ?   ; A button
+pad_x      .byte ?   ; X button
+pad_l      .byte ?   ; L shoulder
+pad_r      .byte ?   ; R shoulder
+_pad_end:
+.endvirtual
+
+; =============================================
+; Animation state ($0058)
+; =============================================
+.virtual $0058
+anim_frame    .byte ?   ; interpolation progress (0-127)
+anim_speed    .byte ?   ; frames to skip between updates
+anim_timer    .byte ?   ; frame skip counter
+anim_phase    .byte ?   ; current palette transition (0-2)
+anim_src_idx  .word ?   ; ROM offset of "from" palette
+anim_dst_idx  .word ?   ; ROM offset of "to" palette
+anim_src_ptr  .fill 3   ; long pointer to src palette in ROM
+anim_dst_ptr  .fill 3   ; long pointer to dst palette in ROM
+anim_temp     .fill 4   ; temp workspace for interpolation
+staging_ptr   .word ?   ; pointer to inactive hdma_pal buffer
+hdma_pal_flip .byte ?   ; 0: HDMA reads A, write B; 1: HDMA reads B, write A
+_anim_end:
+.endvirtual
+
+; =============================================
+; Ball sprite state ($0070)
+; =============================================
+.virtual $0070
+ball_x      .byte ?   ; X position (pixels)
+ball_y      .byte ?   ; Y position (pixels)
+ball_vx     .byte ?   ; X velocity (signed, pixels/frame)
+ball_vy     .byte ?   ; Y velocity (signed, pixels/frame)
+bounce_wall .byte ?   ; which wall was hit (0=none, 1-4=wall)
+_ball_end:
+.endvirtual
 
 ; Screen bounds for ball (8x8 sprite)
 BALL_MIN_X = 0
@@ -112,79 +167,81 @@ NUM_PALETTES       = 4
 PALETTE_SIZE       = 30   ; 10 R + 10 G + 10 B per palette
 
 ; =============================================
-; Window system ($0075-$00C1)
+; Window system ($0075)
 ; =============================================
-window_x          = $0075  ; .byte - window X position (tile column)
-window_y          = $0076  ; .byte - window Y position (tile row)
-window_w          = $0077  ; .byte - window width (tiles)
-window_h          = $0078  ; .byte - window height (tiles)
-window_tmp        = $0079  ; .word - work variable
-window_tbank      = $007B  ; .byte - window title string bank
-window_taddr      = $007C  ; .word - window title string address
-window_stack_head = $007E  ; .word - window stack head pointer
-stringbuf         = $0080  ; 66 bytes - string buffer for window rendering
+.virtual $0075
+window_x          .byte ?    ; window X position (tile column)
+window_y          .byte ?    ; window Y position (tile row)
+window_w          .byte ?    ; window width (tiles)
+window_h          .byte ?    ; window height (tiles)
+window_tmp        .word ?    ; work variable
+window_tbank      .byte ?    ; window title string bank
+window_taddr      .word ?    ; window title string address
+window_stack_head .word ?    ; window stack head pointer
+stringbuf         .fill 66   ; string buffer for window rendering
+_window_end:
+.endvirtual
 
 ; =============================================
-; List/menu selector ($00C2-$00C9)
+; List/menu selector ($00C2)
 ; =============================================
-listsel_sel        = $00C2  ; .byte - current selection index
-listsel_step       = $00C3  ; .byte - step size
-listsel_max        = $00C4  ; .byte - maximum selection value
-listsel_pickbutton = $00C5  ; .byte - button used to pick
-listsel_dirty      = $00C6  ; .byte - needs redraw
-listsel_backup     = $00C7  ; .byte - backup of selection
-listdisp           = $00C8  ; .word - number of displayable list entries
+.virtual $00C2
+listsel_sel        .byte ?   ; current selection index
+listsel_step       .byte ?   ; step size
+listsel_max        .byte ?   ; maximum selection value
+listsel_pickbutton .byte ?   ; button used to pick
+listsel_dirty      .byte ?   ; needs redraw
+listsel_backup     .byte ?   ; backup of selection
+listdisp           .word ?   ; number of displayable list entries
+_listsel_end:
+.endvirtual
 
 ; =============================================
-; File selector state ($00CA-$00F5)
+; File selector state ($00CA)
 ; =============================================
-dirptr_addr       = $00CA  ; .word - current dir entry address
-dirptr_bank       = $00CC  ; .word - current dir entry bank
-dirstart_addr     = $00CE  ; .word - start of visible dir window address
-dirstart_bank     = $00D0  ; .word - start of visible dir window bank
-dirend_addr       = $00D2  ; .word - end of dir listing address
-dirend_bank       = $00D4  ; .word - end of dir listing bank
-dirend_idx        = $00D6  ; .word - end of dir listing index
-dirptr_idx        = $00D8  ; .word - current dir entry index
-dirent_addr       = $00DA  ; .word - address of current dirent
-dirent_bank       = $00DC  ; .word - bank of current dirent
-dirent_type       = $00DE  ; .byte - type of current dirent
-dirend_onscreen   = $00DF  ; .byte - is end of dir visible?
-dirlog_idx        = $00E0  ; 3 bytes - logical index long pointer
-direntry_fits_idx = $00E3  ; .word - entry fits index
-longptr           = $00E5  ; 3 bytes - general purpose long pointer
-filesel_state     = $00E8  ; .byte - menu state (0=file select)
-filesel_dirty     = $00E9  ; .byte - needs redraw
-filesel_sel       = $00EA  ; .word - selected item number
-cursor_x          = $00EC  ; .byte - current cursor position (x)
-cursor_y          = $00ED  ; .byte - current cursor position (y)
-fd_addr           = $00EE  ; .word - file descriptor address
-fd_bank           = $00F0  ; .byte - file descriptor bank
-fd_fnoff          = $00F1  ; .word - filename offset in file descriptor
-num_recent_games    = $00F3  ; .byte - number of recent games (from MCU)
-num_favorite_games  = $00F4  ; .byte - number of favorite games (from MCU)
-recent_sel          = $00F5  ; .byte - recent games selection
+.virtual $00CA
+dirptr_addr       .word ?   ; current dir entry address
+dirptr_bank       .word ?   ; current dir entry bank
+dirstart_addr     .word ?   ; start of visible dir window address
+dirstart_bank     .word ?   ; start of visible dir window bank
+dirend_addr       .word ?   ; end of dir listing address
+dirend_bank       .word ?   ; end of dir listing bank
+dirend_idx        .word ?   ; end of dir listing index
+dirptr_idx        .word ?   ; current dir entry index
+dirent_addr       .word ?   ; address of current dirent
+dirent_bank       .word ?   ; bank of current dirent
+dirent_type       .byte ?   ; type of current dirent
+dirend_onscreen   .byte ?   ; is end of dir visible?
+dirlog_idx        .fill 3   ; logical index long pointer
+direntry_fits_idx .word ?   ; entry fits index
+longptr           .fill 3   ; general purpose long pointer
+filesel_state     .byte ?   ; menu state (0=file select)
+filesel_dirty     .byte ?   ; needs redraw
+filesel_sel       .word ?   ; selected item number
+cursor_x          .byte ?   ; current cursor position (x)
+cursor_y          .byte ?   ; current cursor position (y)
+fd_addr           .word ?   ; file descriptor address
+fd_bank           .byte ?   ; file descriptor bank
+fd_fnoff          .word ?   ; filename offset in file descriptor
+num_recent_games    .byte ?  ; number of recent games (from MCU)
+num_favorite_games  .byte ?  ; number of favorite games (from MCU)
+recent_sel          .byte ?  ; recent games selection
+_filesel_end:
+.endvirtual
 
 ; =============================================
-; Filesel buffers ($0400-$0505)
-; These are above the HDMA table area and below the stack.
+; Indirect-long pointers ($00F6)
+; Used with [ptr] and [ptr],y addressing — require DP range
 ; =============================================
-; dirlog format (8 bytes per entry, 24 entries max):
-;   dirstart_addr  2
-;   dirstart_bank  1
-;   dirptr_addr    2
-;   dirptr_bank    1
-;   filesel_sel    2
-;   total          8 bytes
-dirlog                  = $0400  ; 192 bytes - directory navigation log
-direntry_fits           = $04C0  ; 32 bytes - per-entry "overflows" flags
-direntry_xscroll_state  = $04E0  ; .word - scroll state machine
-direntry_xscroll        = $04E2  ; .word - current scroll offset
-direntry_xscroll_wait   = $04E4  ; .word - scroll delay counter
-current_dir             = $04E6  ; 160 bytes - current directory path buffer
+.virtual $00F6
+sm_menu_ptr    .fill 3   ; show_menu: current menu structure
+menu_val_ptr   .fill 3   ; entry value / edit value pointer
+menu_aux_ptr   .fill 3   ; kv parameter / preset range pointer
+_indptr_end:
+.endvirtual
 
 ; =============================================
-; HDMA tables ($0100-$02FF, double-buffer at $0300)
+; HDMA tables ($0100)
 ; Copied from ROM source tables at boot via DMA to WRAM port.
 ; HDMA reads from these WRAM copies (bank $00 mirror = bank $7E).
 ;
@@ -194,95 +251,131 @@ current_dir             = $04E6  ; 160 bytes - current directory path buffer
 ;   HDMA ch2's source pointer ($4322). HDMA re-reads the pointer
 ;   at the next V-Blank init, making the swap atomic.
 ; =============================================
-hdma_pal              = $0100  ; 128 bytes - gradient BGR555 colors (buffer A)
-hdma_pal_back         = $0300  ; 128 bytes - gradient BGR555 colors (buffer B)
-hdma_cg_addr          = $0180  ; 227 bytes - CGRAM address (all zeros)
-hdma_mode             = $0263  ; 5 bytes - BG mode switching
-hdma_bg1scroll        = $0268  ; 21 bytes - BG1 horizontal scroll
-hdma_bg2scroll        = $027D  ; 13 bytes - BG2 vertical scroll
-hdma_math             = $028A  ; 6 bytes - color math initial
-hdma_math_upperborder = $0290  ; 3 bytes - selection bar upper border
-hdma_math_selection   = $0293  ; 3 bytes - selection bar highlight
-hdma_math_lowerborder = $0296  ; 10 bytes - selection bar lower border
+.virtual $0100
+hdma_pal              .fill 128  ; gradient BGR555 colors (buffer A)
+hdma_cg_addr          .fill 227  ; CGRAM address (all zeros)
+hdma_mode             .fill 5    ; BG mode switching
+hdma_bg1scroll        .fill 21   ; BG1 horizontal scroll
+hdma_bg2scroll        .fill 13   ; BG2 vertical scroll
+hdma_math             .fill 6    ; color math initial
+hdma_math_upperborder .fill 3    ; selection bar upper border
+hdma_math_selection   .fill 3    ; selection bar highlight
+hdma_math_lowerborder .fill 10   ; selection bar lower border
+_hdma_end:
+.endvirtual
 
 ; =============================================
-; Time/RTC variables ($02A0-$02B0)
+; Time/RTC variables ($02A0)
 ; Between HDMA tables (end $029F) and hdma_pal_back ($0300).
 ; =============================================
-time_s1      = $02A0  ; .byte - seconds ones digit (BCD)
-time_s10     = $02A1  ; .byte - seconds tens digit
-time_m1      = $02A2  ; .byte - minutes ones digit
-time_m10     = $02A3  ; .byte - minutes tens digit
-time_h1      = $02A4  ; .byte - hours ones digit
-time_h10     = $02A5  ; .byte - hours tens digit
-time_d1      = $02A6  ; .byte - day ones digit
-time_d10     = $02A7  ; .byte - day tens digit
-time_mon     = $02A8  ; .byte - month (1-12)
-time_y1      = $02A9  ; .byte - year ones digit
-time_y10     = $02AA  ; .byte - year tens digit
-time_y100    = $02AB  ; .byte - year hundreds digit
-time_sel     = $02AC  ; .byte - which field is selected (0-5)
-time_exit    = $02AD  ; .byte - nonzero = user pressed A (save)
-time_cancel  = $02AE  ; .byte - nonzero = user pressed B (cancel)
-time_ptr     = $02AF  ; .byte - BCD offset for current field
-time_tmp     = $02B0  ; .byte - scratch for leap year calc
+.virtual $02A0
+time_s1      .byte ?   ; seconds ones digit (BCD)
+time_s10     .byte ?   ; seconds tens digit
+time_m1      .byte ?   ; minutes ones digit
+time_m10     .byte ?   ; minutes tens digit
+time_h1      .byte ?   ; hours ones digit
+time_h10     .byte ?   ; hours tens digit
+time_d1      .byte ?   ; day ones digit
+time_d10     .byte ?   ; day tens digit
+time_mon     .byte ?   ; month (1-12)
+time_y1      .byte ?   ; year ones digit
+time_y10     .byte ?   ; year tens digit
+time_y100    .byte ?   ; year hundreds digit
+time_sel     .byte ?   ; which field is selected (0-5)
+time_exit    .byte ?   ; nonzero = user pressed A (save)
+time_cancel  .byte ?   ; nonzero = user pressed B (cancel)
+time_ptr     .byte ?   ; BCD offset for current field
+time_tmp     .byte ?   ; scratch for leap year calc
+_time_end:
+.endvirtual
 
 ; =============================================
-; Time dialog work variables ($02B1-$02B5)
+; Time dialog work variables ($02B1)
 ; Parameters stored here by time_init (avoids AllocStack/TCD).
 ; =============================================
-time_work_addr = $02B1  ; .word - pointer to time struct being edited
-time_work_bank = $02B3  ; .byte - bank of time struct
-time_work_x    = $02B4  ; .byte - dialog X position
-time_work_y    = $02B5  ; .byte - dialog Y position
+.virtual $02B1
+time_work_addr .word ?   ; pointer to time struct being edited
+time_work_bank .byte ?   ; bank of time struct
+time_work_x    .byte ?   ; dialog X position
+time_work_y    .byte ?   ; dialog Y position
+_time_work_end:
+.endvirtual
 
 ; =============================================
-; System info text buffer ($02B6-$02DD, 40 bytes)
+; System info text buffer ($02B6)
 ; =============================================
-snes_system_config = $02B6  ; 40 bytes - copy of text_system, filled by sysinfo
-
-; =============================================
-; Jukebox / SPC track navigation ($02DE-$02E0)
-; =============================================
-jukebox_active   = $02DE  ; .byte - nonzero = jukebox track change pending
-jukebox_sel_abs  = $02DF  ; .word - absolute byte offset of target entry in dir listing
+.virtual $02B6
+snes_system_config .fill 40  ; copy of text_system, filled by sysinfo
+_sysinfo_end:
+.endvirtual
 
 ; =============================================
-; Menu system variables ($0013-$002F, $00F6-$00FE)
-;
-; These MUST be in the DP range ($00-$FF) so they can be
-; accessed via direct page mode regardless of DBR setting.
-; Menu code runs with DBR = menu bank ($C0) where absolute
-; addressing would hit ROM, not WRAM. DP mode always hits
-; bank $00 (WRAM mirror) regardless of DBR.
+; Jukebox / SPC track navigation ($02DE)
 ; =============================================
-
-; show_menu locals ($0013-$0016) — saved/restored for recursion
-sm_numentries  = $0013  ; .byte - number of entries in current menu
-sm_max_lbl_len = $0014  ; .byte - max label width
-sm_max_opt_len = $0015  ; .byte - max option value width
-sm_title_len   = $0016  ; .byte - window title length
-
-; menu_edit_value / value dialog vars ($0028-$002F)
-mev_work_value = $0028  ; .word - edit dialog current value
-mev_value_len  = $002A  ; .byte - edit dialog value display length
-mev_text_grey  = $002B  ; .byte - edit dialog greyed out flag
-mev_chgfunc_ptr = $002C ; 3 bytes - change hook function pointer (addr-1)
-
-; menu_print_opt_string / shared vars ($0035-$003D)
-mev_label_addr = $0035  ; .word - kv8 dialog label address
-mpos_kvpar_data = $0037 ; .word - current kv value
-mpos_kvtab_ptr = $0039  ; 3 bytes - kv table pointer
-
-; Indirect-long pointers ($00F6-$00FE)
-; Used with [ptr] and [ptr],y addressing — require DP range
-sm_menu_ptr    = $00F6  ; 3 bytes - show_menu: current menu structure
-menu_val_ptr   = $00F9  ; 3 bytes - entry value / edit value pointer
-menu_aux_ptr   = $00FC  ; 3 bytes - kv parameter / preset range pointer
+.virtual $02DE
+jukebox_active   .byte ?   ; nonzero = jukebox track change pending
+jukebox_sel_abs  .word ?   ; absolute byte offset of target entry in dir listing
+_jukebox_end:
+.endvirtual
 
 ; =============================================
-; Misc WRAM variables ($02DE-$02E1)
+; HDMA palette double-buffer B ($0300)
+; =============================================
+.virtual $0300
+hdma_pal_back .fill 128  ; gradient BGR555 colors (buffer B)
+_hdma_back_end:
+.endvirtual
+
+; =============================================
+; Filesel buffers ($0400)
+; Above the HDMA table area and below the stack.
+; =============================================
+; dirlog format (8 bytes per entry, 24 entries max):
+;   dirstart_addr  2
+;   dirstart_bank  1
+;   dirptr_addr    2
+;   dirptr_bank    1
+;   filesel_sel    2
+;   total          8 bytes
+.virtual $0400
+dirlog                  .fill 192  ; directory navigation log
+direntry_fits           .fill 32   ; per-entry "overflows" flags
+direntry_xscroll_state  .word ?    ; scroll state machine
+direntry_xscroll        .word ?    ; current scroll offset
+direntry_xscroll_wait   .word ?    ; scroll delay counter
+current_dir             .fill 160  ; current directory path buffer
+_filesel_buf_end:
+.endvirtual
+
+; =============================================
+; Misc WRAM variables
+; infloop overlaps with jukebox_active — shared address $02DE
+; These are only used when jukebox is not active and vice versa.
 ; =============================================
 infloop  = $02DE  ; 2 bytes - filled with $80 $FE (BRA self) at boot
 mm_tmp   = $02E0  ; .byte - main menu scratch
 mm_sel   = $02E1  ; .byte - main menu selection
+
+; =============================================================
+; Region boundary assertions
+; Catch overflows at assemble time if a region grows too large.
+; =============================================================
+.cerror _print_end > $0013, "Print system overflows into menu locals"
+.cerror _sm_locals_end > $0020, "Menu locals overflow into state flags"
+.cerror _state_end > $0028, "State flags overflow into menu edit vars"
+.cerror _mev_end > $0030, "Menu edit vars overflow into brightness"
+.cerror _bright_end > $0035, "Brightness overflow into menu print_opt vars"
+.cerror _mpos_end > $0040, "Menu print_opt vars overflow into joypad"
+.cerror _pad_end > $0058, "Joypad overflow into animation"
+.cerror _anim_end > $0070, "Animation overflow into ball sprite"
+.cerror _ball_end > $0075, "Ball sprite overflow into window system"
+.cerror _window_end > $00C2, "Window system overflow into list selector"
+.cerror _listsel_end > $00CA, "List selector overflow into file selector"
+.cerror _filesel_end > $00F6, "File selector overflow into indirect-long ptrs"
+.cerror _indptr_end > $0100, "Indirect-long ptrs overflow into HDMA tables"
+.cerror _hdma_end > $02A0, "HDMA tables overflow into time/RTC"
+.cerror _time_end > $02B1, "Time/RTC overflow into time work vars"
+.cerror _time_work_end > $02B6, "Time work vars overflow into system info"
+.cerror _sysinfo_end > $02DE, "System info overflow into jukebox"
+.cerror _hdma_back_end > $0400, "HDMA buffer B overflow into filesel buffers"
+.cerror _filesel_buf_end > $1FFF, "Filesel buffers overflow into stack area"

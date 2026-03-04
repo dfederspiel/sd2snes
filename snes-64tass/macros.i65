@@ -1,0 +1,34 @@
+; macros.i65 - Convenience macros for 64tass port
+;
+; Requires: data.i65 (for print_* variable addresses)
+
+; =============================================
+; PrintAt - Set up all hiprint parameters and call hiprint
+;
+; Usage:
+;   PrintAt 5, 10, my_string, 0, 32
+;   PrintAt 5, 10, my_string          ; pal=0, count=32
+;   PrintAt 5, 10, my_string, 1       ; bold, count=32
+;
+; Requires: 8-bit A (.as), 16-bit X (.xl)
+; Clobbers: A, X
+; =============================================
+PrintAt .macro x, y, str, pal=0, count=32
+  lda #\y
+  sta print_y
+  lda #\x
+  sta print_x
+  lda #\str >> 16
+  sta print_bank
+  ldx #\str & $ffff
+  stx print_src
+  .if \pal == 0
+    stz print_pal
+  .else
+    lda #\pal
+    sta print_pal
+  .endif
+  lda #\count
+  sta print_count
+  jsr hiprint
+.endm

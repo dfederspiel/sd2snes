@@ -9,6 +9,7 @@
 .include "dma.i65"
 .include "stack.i65"
 .include "data.i65"
+.include "macros.i65"
 
 ; =============================================
 ; Code starts at $C00000 (HiROM bank $C0)
@@ -590,118 +591,28 @@ poc_display
   .xl
 
   ; title: "S A T E L L A V I E W" at row 3, bold
-  lda #3
-  sta print_y
-  lda #5               ; centered: (32-21)/2 ≈ 5
-  sta print_x
-  lda #title_str1 >> 16
-  sta print_bank
-  ldx #title_str1 & $ffff
-  stx print_src
-  lda #1               ; bold palette
-  sta print_pal
-  lda #32
-  sta print_count
-  jsr hiprint
+  PrintAt 5, 3, title_str1, 1, 32
 
   ; subtitle: "revival project" at row 5
-  lda #5
-  sta print_y
-  lda #9               ; centered: (32-15)/2 ≈ 8
-  sta print_x
-  lda #title_str2 >> 16
-  sta print_bank
-  ldx #title_str2 & $ffff
-  stx print_src
-  stz print_pal        ; normal palette
-  lda #32
-  sta print_count
-  jsr hiprint
+  PrintAt 9, 5, title_str2, 0, 32
 
   ; byline: "by DavidAF" at row 6
-  lda #6
-  sta print_y
-  lda #11              ; centered: (32-10)/2 = 11
-  sta print_x
-  lda #title_str3 >> 16
-  sta print_bank
-  ldx #title_str3 & $ffff
-  stx print_src
-  stz print_pal        ; normal palette
-  lda #32
-  sta print_count
-  jsr hiprint
+  PrintAt 11, 6, title_str3, 0, 32
 
   ; line 1: "WE HAVE BREACHED THE PERIMITER" at row 10
-  lda #10
-  sta print_y
-  lda #3
-  sta print_x
-  lda #emu_str1 >> 16
-  sta print_bank
-  ldx #emu_str1 & $ffff
-  stx print_src
-  lda #1               ; bold palette
-  sta print_pal
-  lda #32
-  sta print_count
-  jsr hiprint
+  PrintAt 3, 10, emu_str1, 1, 32
 
   ; line 2: "No MCU detected" at row 12
-  lda #12
-  sta print_y
-  lda #4
-  sta print_x
-  lda #emu_str2 >> 16
-  sta print_bank
-  ldx #emu_str2 & $ffff
-  stx print_src
-  stz print_pal
-  lda #40
-  sta print_count
-  jsr hiprint
+  PrintAt 4, 12, emu_str2, 0, 40
 
   ; line 3: "sd2snes menu ROM loaded OK" at row 14
-  lda #14
-  sta print_y
-  lda #4
-  sta print_x
-  lda #emu_str3 >> 16
-  sta print_bank
-  ldx #emu_str3 & $ffff
-  stx print_src
-  stz print_pal
-  lda #40
-  sta print_count
-  jsr hiprint
+  PrintAt 4, 14, emu_str3, 0, 40
 
   ; line 4: "Edit palette.a65 for colors" at row 17
-  lda #17
-  sta print_y
-  lda #4
-  sta print_x
-  lda #emu_str4 >> 16
-  sta print_bank
-  ldx #emu_str4 & $ffff
-  stx print_src
-  stz print_pal
-  lda #40
-  sta print_count
-  jsr hiprint
+  PrintAt 4, 17, emu_str4, 0, 40
 
   ; line 5: "Edit main.a65 for this text" at row 19
-  lda #19
-  sta print_y
-  lda #4
-  sta print_x
-  lda #emu_str5 >> 16
-  sta print_bank
-  ldx #emu_str5 & $ffff
-  stx print_src
-  stz print_pal
-  lda #40
-  sta print_count
-  jsr hiprint
+  PrintAt 4, 19, emu_str5, 0, 40
 
   ; Wait one NMI frame for DMA to transfer text to VRAM
 - lda isr_done

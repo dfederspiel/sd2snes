@@ -84,18 +84,7 @@ _clear_tiles
   sta window_h
   jsr draw_window
 
-  lda #text_spcload >> 16   ; loading text
-  ldx #text_spcload & $ffff
-  sta print_bank
-  stx print_src
-  stz print_pal
-  lda #29
-  sta print_count
-  lda #16
-  sta print_y
-  lda #17
-  sta print_x
-  jsr hiprint
+  PrintAt 17, 16, text_spcload, 0, 29
 
   stz isr_done
 -
@@ -118,87 +107,17 @@ _clear_tiles
   sta window_h
   jsr draw_window
 
-  lda #text_spcstarta >> 16
-  ldx #text_spcstarta & $ffff
-  sta print_bank
-  stx print_src
-  lda #$01
-  sta print_pal
-  lda #30
-  sta print_count
-  lda #15
-  sta print_y
-  lda #17
-  sta print_x
-  jsr hiprint
+  PrintAt 17, 15, text_spcstarta, 1, 30
 
-  lda #text_spcstartb >> 16
-  ldx #text_spcstartb & $ffff
-  sta print_bank
-  stx print_src
-  lda #$01
-  sta print_pal
-  lda #07
-  sta print_count
-  lda #17
-  sta print_y
-  lda #12
-  sta print_x
-  jsr hiprint
+  PrintAt 12, 17, text_spcstartb, 1, 7
 
-  lda #$fe                  ; filename from SPC header at $FE004E
-  ldx #$004e
-  sta print_bank
-  stx print_src
-  stz print_pal
-  lda #32
-  sta print_count
-  lda #17
-  sta print_y
-  lda #20
-  sta print_x
-  jsr hiprint
+  PrintAt 20, 17, $fe004e, 0, 32    ; filename from SPC header
 
-  lda #text_spcstartc >> 16
-  ldx #text_spcstartc & $ffff
-  sta print_bank
-  stx print_src
-  lda #$01
-  sta print_pal
-  lda #07
-  sta print_count
-  lda #18
-  sta print_y
-  lda #12
-  sta print_x
-  jsr hiprint
+  PrintAt 12, 18, text_spcstartc, 1, 7
 
-  lda #$fe                  ; song name from SPC header at $FE002E
-  ldx #$002e
-  sta print_bank
-  stx print_src
-  stz print_pal
-  lda #32
-  sta print_count
-  lda #18
-  sta print_y
-  lda #20
-  sta print_x
-  jsr hiprint
+  PrintAt 20, 18, $fe002e, 0, 32    ; song name from SPC header
 
-  lda #text_spcstartd >> 16
-  ldx #text_spcstartd & $ffff
-  sta print_bank
-  stx print_src
-  lda #$01
-  sta print_pal
-  lda #07
-  sta print_count
-  lda #19
-  sta print_y
-  lda #12
-  sta print_x
-  jsr hiprint
+  PrintAt 12, 19, text_spcstartd, 1, 7
 
   lda #$fe                  ; artist name from SPC header at $FE00B0
   ldx #$00b0
@@ -221,18 +140,7 @@ _clear_tiles
   jsr hiprint
 
   ; Status bar with navigation hints (row 20, last interior row)
-  lda #text_spc_statusbar >> 16
-  ldx #text_spc_statusbar & $ffff
-  sta print_bank
-  stx print_src
-  stz print_pal
-  lda #22
-  sta print_count
-  lda #20
-  sta print_y
-  lda #21                   ; centered in 44-wide window
-  sta print_x
-  jsr hiprint
+  PrintAt 21, 20, text_spc_statusbar, 0, 22
 
 spc_playloop
   lda isr_done              ; SPC player loop
