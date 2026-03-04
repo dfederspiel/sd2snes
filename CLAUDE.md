@@ -129,11 +129,13 @@ If `config-mk3` has Windows line endings, `autoconf.h` generation breaks silentl
 | `reset.a65` | NMI_ROUTINE (VBlank handler), IRQ_ROUTINE |
 | `dma.a65` | DMA helpers, setup_hdma (enables NMI), killdma |
 | `dma.i65` | DMA7 macro for DMA transfers |
+| `registers.i65` | SNES PPU/CPU register addresses and bit-field constants |
+| `macros.i65` | Convenience macros (PrintAt for hiprint boilerplate) |
 | `filesel.a65` | File selector: init, main loop, directory rendering |
 | `ui.a65` | Text rendering: hiprint (Mode 5), loprint, draw_window |
 | `palette.a65` | BGR555 palette data (512 bytes = 256 colors) |
 | `const.a65` | String constants (null-terminated ASCII) |
-| `data.a65` | WRAM variable declarations |
+| `data.i65` | WRAM variable layout (.virtual blocks with overflow guards) |
 | `memmap.i65` | Memory map `#define` constants |
 | `near.a65` | Tribute/splash screen (large graphics data) |
 | `pad.a65` | Joypad reading |

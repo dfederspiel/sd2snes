@@ -189,6 +189,21 @@ Fires every VBlank (~60Hz). DMAs BG1/BG2 tile buffers WRAM->VRAM, updates cursor
 | `$FF019D` | CFG_BRIGHTNESS_LIMIT | Screen brightness config |
 | `$FF1110` | ST_SNES_ADDR | SNES status flags (Ultra16, Satellaview) |
 
+## Register Constants (registers.i65)
+
+The 64tass SDK includes `snes-64tass/registers.i65` with named constants for every SNES register. Use these instead of magic numbers:
+
+```asm
+lda #OBSEL_SIZE_8x8_16x16 | OBSEL_BASE_6000   ; instead of lda #$03
+sta OBSEL                                       ; instead of sta $2101
+lda #TM_OBJ | TM_BG1 | TM_BG2                  ; instead of lda #$13
+sta TM                                          ; instead of sta $212c
+lda #VMAIN_WORD_ACCESS                          ; instead of lda #$80
+sta VMAIN                                       ; instead of sta $2115
+```
+
+Covers: PPU ($2100-$213F), WRAM port ($2180-$2183), old-style joypad ($4016-$4017), CPU control ($4200-$421F), DMA channels ($4300-$437A), OAM attributes, processor flags.
+
 ## Detailed References
 
 - [PPU Registers](reference/ppu-registers.md) — All PPU/CPU registers with bit layouts, initial values, BG mode summary (manual-validated)
