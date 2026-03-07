@@ -1,0 +1,190 @@
+; nmihook.a65 - NMI hook + reset hook for in-game BRAM injection
+; Ported from snes/nmihook.a65 (snescom) to 64tass
+;
+; This code is copied by the MCU into FPGA BRAM at $002A10 on game boot.
+; The FPGA intercepts NMI vector reads and redirects to this code.
+;
+; CRITICAL: The FPGA patches branch operands at hardcoded offsets from
+; the start of this block:
+;   branch1 operand: offset +$0F
+;   branch2 operand: offset +$49
+;   branch3 operand: offset +$4E
+; Do NOT change code size before or between these points.
+
+; savestate_handler lives in the snescom ROM build at a fixed address.
+; When savestate is ported to 64tass, replace this with the real label.
+savestate_handler = $c09b56
+
+; DP-relative offsets for NMI_PAD when DP=$2B00
+; NMI_PAD = $2BF0, so DP offset = $F0
+_DP_NMI_PAD   = $f0
+_DP_NMI_PAD_H = $f1
+
+; --- NMI hook entry point ---
+; MCU copies 240 bytes starting here into BRAM at $2A10.
+_nmihook_start:
+        .as
+        .xs
+        .databank 0
+        .dpage 0
+        php                     ; +$00
+        rep #$20                ; +$01
+        .al
+        pha                     ; +$03
+        lda @l $004218          ; +$04  read joypad as early as possible
+        sta @l NMI_PAD          ; +$08
+        sep #$20                ; +$0C
+        .as
+.cerror (* - _nmihook_start) != $0e, "branch1 at wrong offset!"
+        bra *                   ; +$0E  branch1: FPGA patches operand at +$0F
+
+_nmi_manual_read:               ; +$10
+        phb
+        phd
+        lda #$2b
+        xba
+        lda #$00
+        tcd                     ; DP = $2B00
+        phk
+        plb
+        lda #$01
+        sta $4016               ; latch joypad
+        stz $4016
+        rep #$10
+        .xl
+        phx
+        ldx #$0008
+_mr1:   lda $4016
+        ror a
+        rol _DP_NMI_PAD_H      ; DP-relative: $2B00+$F1 = $2BF1
+        dex
+        bne _mr1
+        ldx #$0008
+_mr2:   lda $4016
+        ror a
+        rol _DP_NMI_PAD         ; DP-relative: $2B00+$F0 = $2BF0
+        dex
+        bne _mr2
+        plx
+        pld
+        plb
+; button combination -> command is mapped by FPGA
+_nmi_echocmd:
+        lda @l NMI_CMD
+        sta @l MCU_CMD
+; 2nd branch: WRAM cheats, savestate, stop, or exit
+.cerror (* - _nmihook_start) != $48, "branch2 at wrong offset!"
+        bra *                   ; +$48  branch2: FPGA patches operand at +$49
+_nmi_patches:
+        .byte $20               ; jsr opcode
+        .word NMI_WRAM_CHEATS & $ffff  ; absolute address (force 16-bit)
+.cerror (* - _nmihook_start) != $4d, "branch3 at wrong offset!"
+        bra *                   ; +$4D  branch3: FPGA patches operand at +$4E
+_nmi_savestate:
+        jsl savestate_handler
+_nmi_exit:
+        rep #$20
+        .al
+        pla
+        plp
+        sta @l NMI_VECT_DISABLE
+        jmp ($ff77)             ; $77 replaced by FPGA depending on hook entry
+
+_nmi_stop:
+        .as
+        sei
+        sep #$20
+        phk
+        plb
+        stz $4200
+        lda #$80
+        sta $2100
+        bra *
+
+_resethook:                     ; enters in EMULATION MODE
+        .as
+        .xs
+        bra _resethook_skip
+        ; mask interrupt handler call
+        sei
+        ; x stores the count of scanlines
+        ldx #$20
+        ldy #$00
+        ; setup irq on h-position $100
+        lda #$00
+        sta $4207
+        inc a
+        sta $4208
+        lda #$10
+        sta $4200
+_rh_wai:
+        wai
+        sep #$20
+        lda $4212
+        bmi _rh_ack
+        dex
+        asl a
+        bpl _rh_ack
+        iny
+_rh_ack:
+        lda $4211               ; ack IRQ
+        cpx #$00
+        bne _rh_wai
+        stz $4200
+        dex
+        stx $4207
+        dey
+        bmi _rh_pass
+        lda #CMD_RESET_LOOP_FAIL
+        sta @l MCU_CMD
+        bra *
+_rh_pass:
+        inx
+        iny
+_resethook_skip:
+        lda #CMD_RESET_LOOP_PASS
+        sta @l MCU_CMD
+
+_resethook_loop:
+-       lda $4212
+        bpl -
+-       lda $4212
+        bmi -
+        lda $213f
+        bmi _resethook_loop
+        stz NMI_VECT_DISABLE & $ffff
+        jmp ($fffc)
+
+        .text "bram_end"
+
+; Helper routines used by savestate handler. Included to fill the
+; 240-byte BRAM payload exactly as the original binary.
+_waitblank:
+        php
+        sep #$30
+        .as
+        .xs
+-       lda @l $004212
+        bmi -
+-       lda @l $004212
+        bpl -
+        plp
+        rts
+
+_ss_strcopy:
+        php
+        rep #$10
+        .xl
+        sep #$20
+        .as
+        phx
+        ldx #$0000
+        lda $0000,y
+        lsr a
+        .byte $f0, $04           ; beq +4 (target is past 240-byte boundary)
+        iny
+        inx
+        .byte $80               ; truncated bra opcode at 240-byte boundary
+
+; Verify exactly 240 bytes
+.cerror (* - _nmihook_start) != 240, "nmihook must be exactly 240 bytes!"

@@ -5,7 +5,7 @@ all: $(OUT)
 
 DEPS = memmap.i65 dma.i65 stack.i65 data.i65 header.a65 reset.a65 \
        anim.a65 ui.a65 common.a65 pad.a65 filesel.a65 time.a65 \
-       menu.a65 menudata.a65 sysinfo.a65 \
+       menu.a65 menudata.a65 sysinfo.a65 nmihook.a65 \
        dma.a65 font.a65 palette.a65 const.a65
 
 menu.bin: $(SRC) $(DEPS)

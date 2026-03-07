@@ -28,6 +28,7 @@ NMI_WRAM_CHEATS             = $002AD8
 NMI_PAD                     = $002BF0
 NMI_CMD                     = $002BF2
 BRAM_UNLOCK                 = $002BF4
+MCU_RESPONSE                = $002BF6
 MIRROR_4200                 = $002BFA
 PAD_LATCH                   = $002BFB
 NMI_BUTTONS_ENABLE          = $002BFC

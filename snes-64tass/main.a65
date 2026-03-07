@@ -1316,15 +1316,12 @@ wram_load_ultra16_cfg_src
 
 
 ; =============================================
-; NMI hook binary - installed to BRAM ($2A10) by MCU
+; NMI hook - installed to BRAM ($2A10) by MCU
 ; during game loading (snescmd_prepare_nmihook).
 ; MCU reads nmihook_ptr from $C0FF00 to find this data.
-; Extracted from original snescom-built ROM (240 bytes).
-; Must be byte-exact: FPGA patches branch offsets at
-; hardcoded positions within this block.
 ; =============================================
 nmihook
-  .binary "nmihook.bin"
+.include "nmihook.a65"
 
 
 ; =============================================

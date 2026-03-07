@@ -346,6 +346,17 @@ uint8_t snes_main_loop() {
     saveram_crc = 0;
   }
 
+  /* Read joypad state from NMI hook and flash LED on any button press */
+  uint16_t pad = snescmd_readshort(SNESCMD_NMI_PAD);
+  printf("pad=%04x\n", pad);
+  if(pad) {
+    readled(1);
+    snescmd_writebyte(0x01, SNESCMD_MCU_RESPONSE);
+  } else {
+    readled(0);
+    snescmd_writebyte(0x00, SNESCMD_MCU_RESPONSE);
+  }
+
   return snes_get_mcu_cmd();
 }
 
